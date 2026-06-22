@@ -388,10 +388,19 @@ function getStoreSkillPresentation(skill) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  if (typeof applyLanguage === 'function') applyLanguage(getAurexLang());
   setDynamicGreeting();
   setupEventListeners();
   setupSkillsPanel();
+  setupModeSelector();
+  setupSettingsPanel();
+  setupTeachPanel();
   setupMotion();
+  // Esconde o menu de atalhos ao clicar fora ou perder o foco
+  document.addEventListener('click', function (e) {
+    var menu = document.getElementById('slash-menu');
+    if (menu && !menu.contains(e.target)) menu.classList.add('hidden');
+  });
 });
 
 const MotionUI = {
@@ -707,7 +716,8 @@ function loadChat(id) {
 
 function setDynamicGreeting() {
   const greetingEl = document.getElementById('dynamic-greeting');
-  const username = document.getElementById('sidebar-username').innerText;
+  const usernameEl = document.getElementById('sidebar-username');
+  const username = usernameEl ? usernameEl.innerText : 'Aurex';
   const hour = new Date().getHours();
   
   let timeGreeting = "Bom dia";
@@ -727,35 +737,40 @@ function setupEventListeners() {
   const sidebar = document.getElementById('sidebar');
   
   // Hamburger abre o menu fullscreen
-  toggleSidebarBtn.addEventListener('click', () => {
-    sidebar.classList.remove('hidden');
+  if (toggleSidebarBtn) toggleSidebarBtn.addEventListener('click', () => {
+    if (sidebar) sidebar.classList.remove('hidden');
   });
-  
+
   // X fecha o menu
-  closeSidebarBtn.addEventListener('click', () => {
-    sidebar.classList.add('hidden');
+  if (closeSidebarBtn) closeSidebarBtn.addEventListener('click', () => {
+    if (sidebar) sidebar.classList.add('hidden');
   });
 
   // Começa escondido
-  sidebar.classList.add('hidden');
+  if (sidebar) sidebar.classList.add('hidden');
 
   // Renderiza inicial
   renderSidebarChats();
 
   // New Chat
   const newChatBtn = document.getElementById('new-chat-btn');
-  newChatBtn.addEventListener('click', () => {
+  if (newChatBtn) newChatBtn.addEventListener('click', () => {
     currentChatId = Date.now().toString();
     chatHistory = [{ role: "system", content: SYSTEM_PROMPT }];
     let newTask = localStorage.getItem("aurex_active_task");
     if (newTask) chatHistory[0].content += "\n\n# MEMORIA DA TAREFA ATIVA:\n" + newTask;
-    document.getElementById('messages-container').innerHTML = '';
-    document.getElementById('welcome-screen').style.display = 'flex';
-    document.getElementById('chat-interface').style.display = 'none';
-    
-    document.getElementById('main-input').value = '';
-    document.getElementById('chat-bottom-input').value = '';
-    sidebar.classList.add('hidden');
+    const mc = document.getElementById('messages-container');
+    if (mc) mc.innerHTML = '';
+    const ws = document.getElementById('welcome-screen');
+    if (ws) ws.style.display = 'flex';
+    const ci = document.getElementById('chat-interface');
+    if (ci) ci.style.display = 'none';
+
+    const mi = document.getElementById('main-input');
+    if (mi) mi.value = '';
+    const cbi = document.getElementById('chat-bottom-input');
+    if (cbi) cbi.value = '';
+    if (sidebar) sidebar.classList.add('hidden');
   });
 
   // Search feature
@@ -787,31 +802,37 @@ function setupEventListeners() {
     }
 
     if (text === '/logout') {
-      logoutAurexChrome().then(() => appendMessageToUI('assistant', 'Logout Aurex concluido.'));
-      mainInput.value = '';
-      chatInput.value = '';
+      logoutAurexChrome()
+        .then(() => { openLoginPage(); appendMessageToUI('assistant', 'Logout Aurex concluido.'); })
+        .catch((error) => appendMessageToUI('assistant', 'Falha no logout Aurex: ' + error.message));
+      if (mainInput) mainInput.value = '';
+      if (chatInput) chatInput.value = '';
       return;
     }
 
     switchToChatMode();
-    mainInput.value = '';
-    chatInput.value = '';
+    if (mainInput) mainInput.value = '';
+    if (chatInput) chatInput.value = '';
     sendUserMessage(text);
   };
 
-  mainSendBtn.addEventListener('click', () => handleSend(mainInput.value));
-  mainInput.addEventListener('keydown', (e) => {
+  if (mainSendBtn && mainInput) mainSendBtn.addEventListener('click', () => handleSend(mainInput.value));
+  if (mainInput) mainInput.addEventListener('keydown', (e) => {
+    if (handleSlashKeydown(e, mainInput)) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(mainInput.value); }
   });
 
-  chatSendBtn.addEventListener('click', () => handleSend(chatInput.value));
-  chatInput.addEventListener('keydown', (e) => {
+  if (chatSendBtn && chatInput) chatSendBtn.addEventListener('click', () => handleSend(chatInput.value));
+  if (chatInput) chatInput.addEventListener('keydown', (e) => {
+    if (handleSlashKeydown(e, chatInput)) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(chatInput.value); }
   });
+  if (mainInput) mainInput.addEventListener('input', () => maybeShowSlashMenu(mainInput));
+  if (chatInput) chatInput.addEventListener('input', () => maybeShowSlashMenu(chatInput));
 
-  // Skills (apenas botões de skill regulares, exclui o 'Mais skills')
+  // Skills (apenas botões de skill regulares, exclui 'Mais skills' e 'Ensinar Aurex')
   document.querySelectorAll('.skill-btn').forEach(btn => {
-    if (btn.id === 'btn-more-skills') return; // Pula este botão
+    if (btn.id === 'btn-more-skills' || btn.id === 'btn-teach-aurex') return; // Pula estes botões
     btn.addEventListener('click', () => {
       switchToChatMode();
       sendUserMessage(`Por favor, use sua habilidade para: ${btn.innerText.trim()}`);
@@ -1000,7 +1021,7 @@ function renderWidgetContent(htmlContent, container) {
       FORBID_TAGS: ['style'],
       FORBID_ATTR: ['style', 'onclick'],
       ADD_TAGS: ['widget'], // <style> removido por segurança
-      ADD_ATTR: ['data-prompt', 'class'] // 'onclick' e 'style' removidos por segurança
+      ADD_ATTR: ['data-prompt', 'data-slash-action', 'class'] // 'onclick' e 'style' removidos por segurança
     });
   } else {
     // Se DOMPurify falhar, recusa renderizar HTML cru do modelo (fail-safe)
@@ -1026,7 +1047,21 @@ function renderWidgetContent(htmlContent, container) {
       window.sendPrompt(promptText);
     });
   });
-  
+
+  // Ações do menu de atalhos (/atalhos): gravar fluxo / agendar tarefa
+  widgetDiv.querySelectorAll('[data-slash-action]').forEach(function(el) {
+    el.addEventListener('click', function() {
+      var action = this.getAttribute('data-slash-action');
+      if (action === 'record') {
+        var teach = document.getElementById('teach-panel');
+        if (teach) teach.classList.remove('hidden');
+      } else if (action === 'schedule') {
+        switchToChatMode();
+        sendUserMessage('Quero agendar uma tarefa. Pergunte-me o que devo agendar e quando.');
+      }
+    });
+  });
+
   container.appendChild(widgetDiv);
   MotionUI.enterWidget(widgetDiv);
 }
@@ -1434,24 +1469,49 @@ async function processLLMLoop(iterationCount = 0) {
     loadingDiv = document.createElement('div');
     loadingDiv.className = `message assistant thinking-message`;
     loadingDiv.innerHTML = `<div class="message-sender">Aurex</div><div class="message-content"><div class="thinking-indicator"><span class="thinking-orb"></span><div class="thinking-copy"><strong>Pensando</strong><span>Organizando contexto da aba</span></div><div class="thinking-dots"><i class="thinking-dot"></i><i class="thinking-dot"></i><i class="thinking-dot"></i></div><div class="thinking-track"><span class="thinking-bar"></span></div></div></div>`;
-    document.getElementById('messages-container').appendChild(loadingDiv);
+    var _mc = document.getElementById('messages-container');
+    if (_mc) _mc.appendChild(loadingDiv);
     MotionUI.enterMessage(loadingDiv);
     MotionUI.animateThinking(loadingDiv);
 
     let accessToken = await getAurexAccessToken();
 
-    // Prepara payload injetando skills ativas
+    // Prepara payload injetando skills ativas, modo, idioma e personalidade
     _ensureValidToolCallHistory();
     let requestMessages = [...chatHistory];
     if (requestMessages[0] && requestMessages[0].role === "system") {
+      let extraDirectives = "";
+
+      // Modo de operação (Plano / Normal / Autônomo)
+      extraDirectives += getModeDirective();
+
+      // Idioma escolhido pelo usuário (muda a cada requisição se trocado)
+      if (typeof getLanguageDirective === "function") {
+        extraDirectives += getLanguageDirective();
+      }
+
+      // Personalidade customizada
+      let personality = (localStorage.getItem('aurex_personality') || '').trim();
+      if (personality) {
+        extraDirectives += "\n\n# PERSONALIDADE\nAdote o seguinte comportamento e tom em todas as respostas:\n" + personality;
+      }
+
+      // Formato de arquivo preferido
+      let fileExt = localStorage.getItem('aurex_file_ext') || 'md';
+      if (fileExt !== 'md') {
+        extraDirectives += "\n\n# FORMATO DE ARQUIVO\nAo salvar arquivos com save_markdown_file, o usuário prefere a extensão ." + fileExt + ". Gere o conteúdo adequado a esse formato e use a extensão ." + fileExt + " no nome do arquivo.";
+      }
+
+      // Skills ativas
       let activeSkills = (JSON.parse(localStorage.getItem('aurex_user_skills')) || []).filter(s => s.active);
       if (activeSkills.length > 0) {
-        let skillsText = "\n\n# SKILLS ATIVAS OBRIGATÓRIAS\nSiga RIGOROSAMENTE as seguintes diretrizes impostas pelo usuário:\n";
+        extraDirectives += "\n\n# SKILLS ATIVAS OBRIGATÓRIAS\nSiga RIGOROSAMENTE as seguintes diretrizes impostas pelo usuário:\n";
         activeSkills.forEach(s => {
-          skillsText += `\n[SKILL: ${s.name}]\n${s.inst}\n`;
+          extraDirectives += `\n[SKILL: ${s.name}]\n${s.inst}\n`;
         });
-        requestMessages[0] = { ...requestMessages[0], content: requestMessages[0].content + skillsText };
       }
+
+      requestMessages[0] = { ...requestMessages[0], content: requestMessages[0].content + extraDirectives };
     }
 
     let response = await fetch(AUREX_API_URL, {
@@ -1649,6 +1709,9 @@ async function processLLMLoop(iterationCount = 0) {
 
       // Recursively call LLM with tool result
       await processLLMLoop(iterationCount + 1);
+    } else if (iterationCount > 0 && _isVisibleAssistantMessage(responseMsg)) {
+      // Resposta final sem novas ferramentas após executar trabalho: tarefa concluída
+      notifyTaskComplete('Sua tarefa foi concluída pelo Aurex.');
     }
   } catch (error) {
     if (loadingDiv) loadingDiv.remove();
@@ -1664,12 +1727,27 @@ async function processLLMLoop(iterationCount = 0) {
 }
 
 function sanitizeMarkdownFilename(filename) {
-  var value = String(filename || "aurex_output.md").replace(/\\/g, "/").split("/").pop().trim();
+  var ext = (localStorage.getItem('aurex_file_ext') || 'md').toLowerCase();
+  var value = String(filename || ("aurex_output." + ext)).replace(/\\/g, "/").split("/").pop().trim();
   value = value.replace(/[<>:"|?*\x00-\x1F]/g, "_");
   value = value.replace(/^\.+/, "").trim();
-  if (!value) value = "aurex_output.md";
-  if (!/\.md$/i.test(value)) value += ".md";
+  if (!value) value = "aurex_output." + ext;
+  // Remove qualquer extensão conhecida existente e aplica a escolhida pelo usuário
+  value = value.replace(/\.(md|txt|html|csv|json)$/i, "");
+  value += "." + ext;
   return value;
+}
+
+function fileMimeForExt() {
+  var ext = (localStorage.getItem('aurex_file_ext') || 'md').toLowerCase();
+  var map = {
+    md: "text/markdown;charset=utf-8",
+    txt: "text/plain;charset=utf-8",
+    html: "text/html;charset=utf-8",
+    csv: "text/csv;charset=utf-8",
+    json: "application/json;charset=utf-8"
+  };
+  return map[ext] || "text/plain;charset=utf-8";
 }
 
 function executeToolInBrowser(name, args) {
@@ -1737,7 +1815,7 @@ function executeToolInBrowser(name, args) {
         resolve({ success: false, error: "Conteudo Markdown vazio." });
         return;
       }
-      var blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+      var blob = new Blob([content], { type: fileMimeForExt() });
       var url = URL.createObjectURL(blob);
       chrome.downloads.download({
         url: url,
@@ -1786,6 +1864,571 @@ function executeToolInBrowser(name, args) {
     } else {
       resolve({ success: false, error: "Unknown tool: " + name });
     }
+  });
+}
+
+// ========== MODOS DE OPERAÇÃO (PLANO / NORMAL / AUTÔNOMO) ==========
+function getAurexMode() {
+  var m = localStorage.getItem('aurex_mode') || 'plan';
+  return ['plan', 'normal', 'autonomous'].includes(m) ? m : 'plan';
+}
+
+function setAurexMode(mode) {
+  if (!['plan', 'normal', 'autonomous'].includes(mode)) mode = 'plan';
+  localStorage.setItem('aurex_mode', mode);
+  // O background lê este valor para auto-conceder permissões no modo autônomo
+  try { chrome.storage.local.set({ aurex_mode: mode }); } catch (e) { /* ignore */ }
+}
+
+// Diretiva injetada no system prompt conforme o modo. O SYSTEM_PROMPT base já
+// contém a regra do "PLANO DE ACAO OBRIGATORIO"; nos outros modos sobrescrevemos.
+function getModeDirective() {
+  var mode = getAurexMode();
+  if (mode === 'normal') {
+    return "\n\n# MODO DE OPERAÇÃO: NORMAL\nIMPORTANTE: NESTE MODO, IGNORE a regra do 'PLANO DE ACAO OBRIGATORIO'. NÃO mostre widget de plano nem peça aprovação para começar. Execute a tarefa diretamente, agindo passo a passo. Ainda assim, respeite os pedidos de permissão por site e confirme antes de ações destrutivas ou irreversíveis (ex: enviar formulários sensíveis, apagar dados).";
+  }
+  if (mode === 'autonomous') {
+    return "\n\n# MODO DE OPERAÇÃO: AUTÔNOMO\nIMPORTANTE: NESTE MODO, IGNORE a regra do 'PLANO DE ACAO OBRIGATORIO'. NÃO mostre widget de plano e NÃO peça aprovação ao usuário. Execute a tarefa inteira de ponta a ponta de forma autônoma, tomando decisões por conta própria até concluir. Só pare se for absolutamente impossível continuar.";
+  }
+  // plan: comportamento padrão já está no SYSTEM_PROMPT base
+  return "\n\n# MODO DE OPERAÇÃO: PLANO\nSiga a regra do 'PLANO DE ACAO OBRIGATORIO': sempre apresente um plano e aguarde aprovação antes de executar tarefas de múltiplos passos.";
+}
+
+function setupModeSelector() {
+  var btn = document.getElementById('mode-selector-btn');
+  var menu = document.getElementById('mode-menu');
+  var label = document.getElementById('mode-current-label');
+  if (!btn || !menu) return;
+
+  function refreshActive() {
+    var mode = getAurexMode();
+    if (label) label.textContent = t('mode.' + mode);
+    menu.querySelectorAll('.mode-option').forEach(function (opt) {
+      opt.classList.toggle('active', opt.getAttribute('data-mode') === mode);
+    });
+  }
+
+  // Garante que o background conheça o modo atual no boot
+  setAurexMode(getAurexMode());
+  refreshActive();
+
+  btn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    menu.classList.toggle('hidden');
+  });
+
+  menu.querySelectorAll('.mode-option').forEach(function (opt) {
+    opt.addEventListener('click', function () {
+      setAurexMode(opt.getAttribute('data-mode'));
+      refreshActive();
+      menu.classList.add('hidden');
+    });
+  });
+
+  document.addEventListener('click', function () { menu.classList.add('hidden'); });
+}
+
+// ========== LOGIN / LOGOUT ==========
+function openLoginPage() {
+  try {
+    chrome.tabs.create({ url: chrome.runtime.getURL('login.html') });
+  } catch (e) {
+    window.open('login.html', '_blank');
+  }
+}
+
+// ========== NOTIFICAÇÕES ==========
+function notifyTaskComplete(message) {
+  if (localStorage.getItem('aurex_notify') !== 'true') return;
+  try {
+    chrome.notifications.create({
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('icon128.png'),
+      title: 'Aurex',
+      message: message || 'Sua tarefa foi concluída.'
+    }, function () { void chrome.runtime.lastError; });
+  } catch (e) { /* ignore */ }
+}
+
+// ========== PAINEL DE CONFIGURAÇÕES ==========
+function setupSettingsPanel() {
+  var panel = document.getElementById('settings-panel');
+  var openBtn = document.getElementById('open-settings');
+  var closeBtn = document.getElementById('close-settings');
+  if (openBtn && panel) {
+    openBtn.addEventListener('click', function () {
+      panel.classList.remove('hidden');
+      renderApprovedSites();
+      renderShortcutsList();
+      var sidebar = document.getElementById('sidebar');
+      if (sidebar) sidebar.classList.add('hidden');
+    });
+  }
+  if (closeBtn && panel) closeBtn.addEventListener('click', function () { panel.classList.add('hidden'); });
+
+  // Tabs internas
+  document.querySelectorAll('.settings-tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      var target = tab.getAttribute('data-settings-tab');
+      document.querySelectorAll('.settings-tab').forEach(function (t2) { t2.classList.remove('active'); });
+      tab.classList.add('active');
+      document.querySelectorAll('.settings-section').forEach(function (sec) { sec.classList.remove('active'); });
+      var sec = document.getElementById('settings-' + target);
+      if (sec) sec.classList.add('active');
+    });
+  });
+
+  // Idioma
+  var langSelect = document.getElementById('language-select');
+  if (langSelect) {
+    langSelect.innerHTML = '';
+    Object.keys(AUREX_LANGUAGES).forEach(function (code) {
+      var opt = document.createElement('option');
+      opt.value = code;
+      opt.textContent = AUREX_LANGUAGES[code];
+      langSelect.appendChild(opt);
+    });
+    langSelect.value = getAurexLang();
+    langSelect.addEventListener('change', function () {
+      applyLanguage(langSelect.value);
+      // Re-renderiza partes dinâmicas dependentes de idioma
+      var modeLabel = document.getElementById('mode-current-label');
+      if (modeLabel) modeLabel.textContent = t('mode.' + getAurexMode());
+      renderApprovedSites();
+      renderShortcutsList();
+      setDynamicGreeting();
+    });
+  }
+
+  // Notificações
+  var notifToggle = document.getElementById('toggle-notifications');
+  if (notifToggle) {
+    notifToggle.checked = localStorage.getItem('aurex_notify') === 'true';
+    notifToggle.addEventListener('change', function () {
+      localStorage.setItem('aurex_notify', notifToggle.checked ? 'true' : 'false');
+    });
+  }
+
+  // Microfone
+  var micToggle = document.getElementById('toggle-microphone');
+  if (micToggle) {
+    micToggle.checked = localStorage.getItem('aurex_mic') === 'true';
+    micToggle.addEventListener('change', function () {
+      if (micToggle.checked) {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(function (stream) {
+              stream.getTracks().forEach(function (track) { track.stop(); });
+              localStorage.setItem('aurex_mic', 'true');
+            })
+            .catch(function () {
+              micToggle.checked = false;
+              localStorage.setItem('aurex_mic', 'false');
+            });
+        } else {
+          localStorage.setItem('aurex_mic', 'true');
+        }
+      } else {
+        localStorage.setItem('aurex_mic', 'false');
+      }
+    });
+  }
+
+  // Personalidade
+  var persInput = document.getElementById('personality-input');
+  var persSave = document.getElementById('save-personality');
+  if (persInput) persInput.value = localStorage.getItem('aurex_personality') || '';
+  if (persSave && persInput) {
+    persSave.addEventListener('click', function () {
+      localStorage.setItem('aurex_personality', persInput.value.trim());
+      persSave.textContent = '✓';
+      setTimeout(function () { persSave.textContent = t('common.save'); }, 1200);
+    });
+  }
+
+  // Formato de arquivo
+  var fileSelect = document.getElementById('file-format-select');
+  if (fileSelect) {
+    fileSelect.value = localStorage.getItem('aurex_file_ext') || 'md';
+    fileSelect.addEventListener('change', function () {
+      localStorage.setItem('aurex_file_ext', fileSelect.value);
+    });
+  }
+
+  // Atalho de teclado -> abre a página nativa do Chrome
+  var configShortcut = document.getElementById('configure-shortcut');
+  if (configShortcut) {
+    configShortcut.addEventListener('click', function () {
+      try { chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }); } catch (e) { /* ignore */ }
+    });
+  }
+  // Mostra o atalho atual configurado (se houver)
+  try {
+    if (chrome.commands && chrome.commands.getAll) {
+      chrome.commands.getAll(function (cmds) {
+        var openCmd = (cmds || []).find(function (c) { return c.name === '_execute_action'; });
+        var cur = document.getElementById('keyboard-current');
+        if (cur && openCmd && openCmd.shortcut) cur.textContent = openCmd.shortcut;
+      });
+    }
+  } catch (e) { /* ignore */ }
+
+  // Logout
+  var logoutBtn = document.getElementById('btn-logout');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', function () {
+      logoutAurexChrome().catch(function () {}).then(function () { openLoginPage(); });
+    });
+  }
+
+  // Atalhos (shortcuts) personalizados
+  setupShortcutsManager();
+}
+
+function renderApprovedSites() {
+  var list = document.getElementById('approved-sites-list');
+  if (!list) return;
+  if (!chrome.storage || !chrome.storage.session) {
+    list.innerHTML = '<div class="approved-sites-empty">' + escapeHtml(t('settings.sites.empty')) + '</div>';
+    return;
+  }
+  chrome.storage.session.get(['aurex_allowed_origins'], function (result) {
+    var origins = (result && result.aurex_allowed_origins) || [];
+    list.innerHTML = '';
+    if (origins.length === 0) {
+      list.innerHTML = '<div class="approved-sites-empty">' + escapeHtml(t('settings.sites.empty')) + '</div>';
+      return;
+    }
+    origins.forEach(function (origin) {
+      var item = document.createElement('div');
+      item.className = 'approved-site-item';
+      var span = document.createElement('span');
+      span.textContent = origin;
+      var btn = document.createElement('button');
+      btn.className = 'action-btn danger';
+      btn.textContent = t('settings.sites.revoke');
+      btn.addEventListener('click', function () {
+        chrome.runtime.sendMessage({ type: 'revoke_permission', origin: origin }, function () {
+          void chrome.runtime.lastError;
+          renderApprovedSites();
+        });
+      });
+      item.appendChild(span);
+      item.appendChild(btn);
+      list.appendChild(item);
+    });
+  });
+}
+
+// ========== ATALHOS PERSONALIZADOS (SHORTCUTS) ==========
+function getUserShortcuts() {
+  try { return JSON.parse(localStorage.getItem('aurex_shortcuts')) || []; }
+  catch (e) { return []; }
+}
+function saveUserShortcuts(list) {
+  localStorage.setItem('aurex_shortcuts', JSON.stringify(list));
+}
+
+function setupShortcutsManager() {
+  var btnCreate = document.getElementById('btn-create-shortcut');
+  var form = document.getElementById('create-shortcut-form');
+  var save = document.getElementById('save-shortcut');
+  var cancel = document.getElementById('cancel-shortcut');
+  if (btnCreate && form) {
+    btnCreate.addEventListener('click', function () { form.classList.remove('hidden'); });
+  }
+  if (cancel && form) {
+    cancel.addEventListener('click', function () {
+      form.classList.add('hidden');
+      document.getElementById('shortcut-name').value = '';
+      document.getElementById('shortcut-prompt').value = '';
+    });
+  }
+  if (save) {
+    save.addEventListener('click', function () {
+      var nameEl = document.getElementById('shortcut-name');
+      var promptEl = document.getElementById('shortcut-prompt');
+      var name = (nameEl.value || '').trim().replace(/^\/+/, '').replace(/\s+/g, '_').toLowerCase();
+      var prompt = (promptEl.value || '').trim();
+      if (!name || !prompt) return;
+      var list = getUserShortcuts();
+      list.push({ name: name, prompt: prompt });
+      saveUserShortcuts(list);
+      nameEl.value = '';
+      promptEl.value = '';
+      if (form) form.classList.add('hidden');
+      renderShortcutsList();
+    });
+  }
+  renderShortcutsList();
+}
+
+function renderShortcutsList() {
+  var list = document.getElementById('shortcuts-list');
+  if (!list) return;
+  var shortcuts = getUserShortcuts();
+  list.innerHTML = '';
+  if (shortcuts.length === 0) {
+    list.innerHTML = '<div class="approved-sites-empty">' + escapeHtml(t('settings.shortcuts.empty')) + '</div>';
+    return;
+  }
+  shortcuts.forEach(function (sc, idx) {
+    var item = document.createElement('div');
+    item.className = 'shortcut-item';
+    var left = document.createElement('div');
+    left.innerHTML = '<div class="shortcut-item-name">/' + escapeHtml(sc.name) + '</div>' +
+      '<div class="shortcut-item-prompt">' + escapeHtml(sc.prompt) + '</div>';
+    var del = document.createElement('button');
+    del.className = 'icon-btn';
+    del.innerHTML = '<i class="fa-solid fa-trash"></i>';
+    del.addEventListener('click', function () {
+      var arr = getUserShortcuts();
+      arr.splice(idx, 1);
+      saveUserShortcuts(arr);
+      renderShortcutsList();
+    });
+    item.appendChild(left);
+    item.appendChild(del);
+    list.appendChild(item);
+  });
+}
+
+// ========== MENU DE ATALHOS NO CHAT (digite /) ==========
+var _slashTargetInput = null;
+
+function getSlashCommands() {
+  var cmds = [
+    { cmd: 'compact', icon: 'fa-broom', desc: t('slash.compact'), builtin: true },
+    { cmd: 'atalhos', icon: 'fa-bolt', desc: t('slash.shortcuts'), builtin: true }
+  ];
+  getUserShortcuts().forEach(function (sc) {
+    cmds.push({ cmd: sc.name, icon: 'fa-play', desc: sc.prompt, builtin: false, prompt: sc.prompt });
+  });
+  return cmds;
+}
+
+function maybeShowSlashMenu(input) {
+  var menu = document.getElementById('slash-menu');
+  if (!menu) return;
+  var val = input.value;
+  if (val.charAt(0) !== '/' || val.indexOf(' ') !== -1) {
+    menu.classList.add('hidden');
+    return;
+  }
+  _slashTargetInput = input;
+  var query = val.slice(1).toLowerCase();
+  var matches = getSlashCommands().filter(function (c) { return c.cmd.toLowerCase().indexOf(query) === 0; });
+  if (matches.length === 0) { menu.classList.add('hidden'); return; }
+
+  menu.innerHTML = '';
+  matches.forEach(function (c, i) {
+    var item = document.createElement('div');
+    item.className = 'slash-item' + (i === 0 ? ' active' : '');
+    item.setAttribute('data-cmd', c.cmd);
+    item.innerHTML = '<i class="fa-solid ' + c.icon + '"></i>' +
+      '<span class="slash-item-cmd">/' + escapeHtml(c.cmd) + '</span>' +
+      '<span class="slash-item-desc">' + escapeHtml(c.desc || '') + '</span>';
+    item.addEventListener('click', function () { executeSlashCommand(c.cmd); });
+    menu.appendChild(item);
+  });
+
+  // Posiciona acima do input
+  var rect = input.getBoundingClientRect();
+  menu.style.left = rect.left + 'px';
+  menu.style.width = rect.width + 'px';
+  menu.classList.remove('hidden');
+  menu.style.top = (rect.top - menu.offsetHeight - 8) + 'px';
+}
+
+function hideSlashMenu() {
+  var menu = document.getElementById('slash-menu');
+  if (menu) menu.classList.add('hidden');
+}
+
+// Retorna true se consumiu o evento de teclado
+function handleSlashKeydown(e, input) {
+  var menu = document.getElementById('slash-menu');
+  if (!menu || menu.classList.contains('hidden')) return false;
+  var items = Array.prototype.slice.call(menu.querySelectorAll('.slash-item'));
+  if (items.length === 0) return false;
+  var activeIdx = items.findIndex(function (it) { return it.classList.contains('active'); });
+  if (activeIdx < 0) activeIdx = 0;
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    items[activeIdx].classList.remove('active');
+    items[(activeIdx + 1) % items.length].classList.add('active');
+    return true;
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    items[activeIdx].classList.remove('active');
+    items[(activeIdx - 1 + items.length) % items.length].classList.add('active');
+    return true;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    executeSlashCommand(items[activeIdx].getAttribute('data-cmd'));
+    return true;
+  }
+  if (e.key === 'Escape') {
+    hideSlashMenu();
+    return true;
+  }
+  return false;
+}
+
+function executeSlashCommand(cmd) {
+  hideSlashMenu();
+  if (_slashTargetInput) _slashTargetInput.value = '';
+
+  if (cmd === 'compact') {
+    compactChatHistory();
+    return;
+  }
+  if (cmd === 'atalhos') {
+    showSlashShortcutsOptions();
+    return;
+  }
+  // Atalho personalizado
+  var sc = getUserShortcuts().find(function (s) { return s.name === cmd; });
+  if (sc) {
+    switchToChatMode();
+    sendUserMessage(sc.prompt);
+  }
+}
+
+// /compact — condensa o histórico mantendo um resumo
+function compactChatHistory() {
+  var systemMsg = chatHistory[0] && chatHistory[0].role === 'system' ? chatHistory[0] : { role: 'system', content: SYSTEM_PROMPT };
+  // Coleta um resumo simples das mensagens de usuário e assistente
+  var lines = [];
+  chatHistory.forEach(function (m) {
+    if (m.role === 'user' && typeof m.content === 'string') {
+      lines.push('• Usuário: ' + m.content.slice(0, 200));
+    } else if (m.role === 'assistant' && typeof m.content === 'string' && m.content.trim()) {
+      var clean = m.content.replace(/<widget>[\s\S]*?<\/widget>/g, '[widget]').replace(/\s+/g, ' ').trim();
+      if (clean) lines.push('• Aurex: ' + clean.slice(0, 200));
+    }
+  });
+  var summary = lines.length ? lines.join('\n') : 'Sem histórico relevante.';
+  chatHistory = [
+    systemMsg,
+    { role: 'system', content: '# RESUMO DA CONVERSA ANTERIOR (compactado)\n' + summary }
+  ];
+  var mc = document.getElementById('messages-container');
+  if (mc) mc.innerHTML = '';
+  switchToChatMode();
+  appendMessageToUI('assistant', t('slash.compactDone'));
+}
+
+// /atalhos — mostra as duas opções (gravar fluxo / agendar tarefa)
+function showSlashShortcutsOptions() {
+  switchToChatMode();
+  var html = '<widget><div class="plan-widget">' +
+    '<div class="plan-header"><i class="ti ti-bolt text-info"></i><strong>' + escapeHtml(t('slash.shortcuts')) + '</strong></div>' +
+    '<div class="flex-row">' +
+    '<button class="q-submit" data-slash-action="record">' + escapeHtml(t('slash.recordWorkflow')) + '</button>' +
+    '<button class="q-submit q-submit-secondary" data-slash-action="schedule">' + escapeHtml(t('slash.scheduleTask')) + '</button>' +
+    '</div></div></widget>';
+  appendMessageToUI('assistant', html);
+}
+
+// ========== ENSINAR AUREX (Teach) ==========
+var _teachRecognition = null;
+var _teachRecording = false;
+var _teachTranscript = '';
+
+function setupTeachPanel() {
+  var panel = document.getElementById('teach-panel');
+  var openBtn = document.getElementById('btn-teach-aurex');
+  var closeBtn = document.getElementById('close-teach');
+  var toggle = document.getElementById('teach-toggle');
+
+  if (openBtn && panel) {
+    openBtn.addEventListener('click', function () { panel.classList.remove('hidden'); });
+  }
+  if (closeBtn && panel) {
+    closeBtn.addEventListener('click', function () {
+      if (_teachRecording) stopTeachRecording();
+      panel.classList.add('hidden');
+    });
+  }
+  if (toggle) {
+    toggle.addEventListener('click', function () {
+      if (_teachRecording) stopTeachRecording();
+      else startTeachRecording();
+    });
+  }
+}
+
+function startTeachRecording() {
+  var statusEl = document.getElementById('teach-status');
+  var transcriptEl = document.getElementById('teach-transcript');
+  var toggle = document.getElementById('teach-toggle');
+  var label = document.getElementById('teach-toggle-label');
+  _teachTranscript = '';
+  if (transcriptEl) transcriptEl.textContent = '';
+
+  // Inicia gravação de fluxo no background
+  chrome.runtime.sendMessage({ type: 'start_recording' }, function () { void chrome.runtime.lastError; });
+  _teachRecording = true;
+  if (toggle) toggle.classList.add('recording');
+  if (label) label.textContent = t('teach.stop');
+  if (statusEl) statusEl.textContent = t('teach.recording');
+
+  // Narração por voz (Web Speech API) se o microfone estiver habilitado
+  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (localStorage.getItem('aurex_mic') === 'true' && SpeechRec) {
+    try {
+      _teachRecognition = new SpeechRec();
+      _teachRecognition.continuous = true;
+      _teachRecognition.interimResults = true;
+      _teachRecognition.lang = getAurexLang() === 'en' ? 'en-US' : (getAurexLang() === 'es' ? 'es-ES' : 'pt-BR');
+      _teachRecognition.onresult = function (event) {
+        var finalText = '';
+        for (var i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) finalText += event.results[i][0].transcript + ' ';
+        }
+        if (finalText) {
+          _teachTranscript += finalText;
+          if (transcriptEl) transcriptEl.textContent = _teachTranscript;
+        }
+      };
+      _teachRecognition.onerror = function () { /* ignore */ };
+      _teachRecognition.start();
+    } catch (e) { _teachRecognition = null; }
+  } else if (statusEl && localStorage.getItem('aurex_mic') !== 'true') {
+    statusEl.textContent = t('teach.micOff');
+  }
+}
+
+function stopTeachRecording() {
+  var statusEl = document.getElementById('teach-status');
+  var toggle = document.getElementById('teach-toggle');
+  var label = document.getElementById('teach-toggle-label');
+  var nameEl = document.getElementById('teach-name');
+  _teachRecording = false;
+  if (toggle) toggle.classList.remove('recording');
+  if (label) label.textContent = t('teach.start');
+
+  if (_teachRecognition) {
+    try { _teachRecognition.stop(); } catch (e) { /* ignore */ }
+    _teachRecognition = null;
+  }
+
+  var name = (nameEl && nameEl.value.trim()) || ('fluxo_' + Date.now());
+  chrome.runtime.sendMessage({ type: 'stop_recording' }, function (response) {
+    void chrome.runtime.lastError;
+    var steps = (response && response.workflow) || [];
+    // Persiste o fluxo (passos + narração) em aurex_workflows
+    chrome.storage.local.get(['aurex_workflows'], function (result) {
+      var workflows = (result && result.aurex_workflows) || {};
+      workflows[name] = { steps: steps, narration: _teachTranscript.trim(), createdAt: Date.now() };
+      chrome.storage.local.set({ aurex_workflows: workflows }, function () {
+        if (statusEl) statusEl.textContent = t('teach.saved') + ' (' + steps.length + ' ' + t('teach.steps') + ')';
+      });
+    });
   });
 }
 
@@ -2107,7 +2750,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 });
 
 // Event delegation para botões injetados no chat (permissão e bloqueio)
-document.getElementById('messages-container').addEventListener('click', (e) => {
+var _messagesContainerEl = document.getElementById('messages-container');
+if (_messagesContainerEl) _messagesContainerEl.addEventListener('click', (e) => {
   // Botão de APROVAR
   if (e.target && e.target.classList.contains('btn-approve-origin')) {
     const origin = e.target.getAttribute('data-origin');
