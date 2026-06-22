@@ -102,7 +102,15 @@ const TRANSLATIONS = {
     "slash.shortcuts": "Atalhos",
     "slash.recordWorkflow": "Gravar fluxo de trabalho",
     "slash.scheduleTask": "Agendar tarefa",
-    "slash.compactDone": "Histórico compactado. Resumo mantido."
+    "slash.compactDone": "Histórico compactado. Resumo mantido.",
+    "voice.listening": "Ouvindo...",
+    "voice.tapToStart": "Toque no microfone e fale",
+    "voice.remember": "Lembrar nesta conversa",
+    "voice.send": "Enviar",
+    "voice.cancel": "Cancelar",
+    "voice.micRequired": "Ative o microfone nas Configurações para usar a voz.",
+    "voice.empty": "Nada foi capturado. Tente de novo.",
+    "voice.title": "Fale com o Aurex"
   },
   en: {
     "app.name": "Aurex",
@@ -186,7 +194,15 @@ const TRANSLATIONS = {
     "slash.shortcuts": "Shortcuts",
     "slash.recordWorkflow": "Record workflow",
     "slash.scheduleTask": "Schedule task",
-    "slash.compactDone": "History compacted. Summary kept."
+    "slash.compactDone": "History compacted. Summary kept.",
+    "voice.listening": "Listening...",
+    "voice.tapToStart": "Tap the microphone and speak",
+    "voice.remember": "Remember in this chat",
+    "voice.send": "Send",
+    "voice.cancel": "Cancel",
+    "voice.micRequired": "Enable the microphone in Settings to use voice.",
+    "voice.empty": "Nothing was captured. Try again.",
+    "voice.title": "Talk to Aurex"
   },
   es: {
     "app.name": "Aurex",
@@ -270,7 +286,15 @@ const TRANSLATIONS = {
     "slash.shortcuts": "Atajos",
     "slash.recordWorkflow": "Grabar flujo de trabajo",
     "slash.scheduleTask": "Programar tarea",
-    "slash.compactDone": "Historial compactado. Resumen mantenido."
+    "slash.compactDone": "Historial compactado. Resumen mantenido.",
+    "voice.listening": "Escuchando...",
+    "voice.tapToStart": "Toca el micrófono y habla",
+    "voice.remember": "Recordar en este chat",
+    "voice.send": "Enviar",
+    "voice.cancel": "Cancelar",
+    "voice.micRequired": "Activa el micrófono en Configuración para usar la voz.",
+    "voice.empty": "No se capturó nada. Inténtalo de nuevo.",
+    "voice.title": "Habla con Aurex"
   }
 };
 

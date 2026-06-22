@@ -395,6 +395,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupModeSelector();
   setupSettingsPanel();
   setupTeachPanel();
+  setupVoiceInput();
   setupMotion();
   // Esconde o menu de atalhos ao clicar fora ou perder o foco
   document.addEventListener('click', function (e) {
@@ -618,13 +619,16 @@ let currentChatId = Date.now().toString();
 
 function saveChats() {
   let chatIndex = savedChats.findIndex(c => c.id === currentChatId);
-  const firstUserMsg = chatHistory.find(m => m.role === 'user');
+  const firstUserMsg = chatHistory.find(m => m.role === 'user' && !m._ephemeral);
   const title = firstUserMsg ? (typeof firstUserMsg.content === 'string' ? firstUserMsg.content.substring(0, 35) : 'Chat').replace(/\n/g, ' ') + '...' : 'Novo Chat';
-  
+
+  // Remove mensagens efêmeras (voz não-lembrada) antes de persistir
+  const persistHistory = chatHistory.filter(m => !m._ephemeral);
+
   if (chatIndex > -1) {
-    savedChats[chatIndex] = { id: currentChatId, title, history: chatHistory };
-  } else if (chatHistory.length > 1) {
-    savedChats.unshift({ id: currentChatId, title, history: chatHistory });
+    savedChats[chatIndex] = { id: currentChatId, title, history: persistHistory };
+  } else if (persistHistory.length > 1) {
+    savedChats.unshift({ id: currentChatId, title, history: persistHistory });
   }
   // Limita a 50 chats para não explodir o localStorage
   if (savedChats.length > 50) savedChats = savedChats.slice(0, 50);
@@ -634,16 +638,14 @@ function saveChats() {
 
 function deleteChat(id, event) {
   if (event) event.stopPropagation();
-  if (confirm('Tem certeza que deseja excluir este chat?')) {
-    savedChats = savedChats.filter(c => c.id !== id);
-    localStorage.setItem('aurex_chats', JSON.stringify(savedChats));
-    
-    if (currentChatId === id) {
-      const newChatBtn = document.getElementById('new-chat-btn');
-      if (newChatBtn) newChatBtn.click();
-    } else {
-      renderSidebarChats();
-    }
+  savedChats = savedChats.filter(c => c.id !== id);
+  localStorage.setItem('aurex_chats', JSON.stringify(savedChats));
+
+  if (currentChatId === id) {
+    const newChatBtn = document.getElementById('new-chat-btn');
+    if (newChatBtn) newChatBtn.click();
+  } else {
+    renderSidebarChats();
   }
 }
 
@@ -685,10 +687,18 @@ function renderSidebarChats() {
     
     deleteBtn.onmouseover = () => deleteBtn.style.color = '#ff4444';
     deleteBtn.onmouseout = () => deleteBtn.style.color = 'var(--text-secondary)';
-    deleteBtn.onclick = (e) => deleteChat(chat.id, e);
+    deleteBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      deleteChat(chat.id, e);
+    });
 
-    li.onclick = () => loadChat(chat.id);
-    
+    // Clicar na linha abre o chat — mas ignora cliques no botão de excluir
+    li.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      loadChat(chat.id);
+    });
+
     li.appendChild(titleSpan);
     li.appendChild(deleteBtn);
     list.appendChild(li);
@@ -1439,13 +1449,19 @@ function _resetLoopDetector() {
 
 let isLLMProcessing = false;
 
-async function sendUserMessage(text) {
+async function sendUserMessage(text, options) {
   if (isLLMProcessing) return; // Impede duplo envio ou interrupção do loop
+  options = options || {};
 
   var messageContent = text;
-  
+
   appendMessageToUI('user', messageContent);
-  chatHistory.push({ role: "user", content: messageContent });
+  var msg = { role: "user", content: messageContent };
+  // Mensagens de voz são efêmeras: o Aurex segue o conteúdo, mas elas não são
+  // persistidas no histórico salvo (descartadas), a não ser que o usuário peça
+  // para lembrar nesta conversa.
+  if (options.ephemeral) msg._ephemeral = true;
+  chatHistory.push(msg);
 
   isLLMProcessing = true;
   _resetLoopDetector();
@@ -1938,16 +1954,22 @@ function openLoginPage() {
 }
 
 // ========== NOTIFICAÇÕES ==========
-function notifyTaskComplete(message) {
-  if (localStorage.getItem('aurex_notify') !== 'true') return;
+function showAurexNotification(title, message) {
+  if (!chrome.notifications || !chrome.notifications.create) return;
   try {
-    chrome.notifications.create({
+    chrome.notifications.create('aurex_' + Date.now(), {
       type: 'basic',
       iconUrl: chrome.runtime.getURL('icon128.png'),
-      title: 'Aurex',
-      message: message || 'Sua tarefa foi concluída.'
+      title: title || 'Aurex',
+      message: message || '',
+      priority: 2
     }, function () { void chrome.runtime.lastError; });
   } catch (e) { /* ignore */ }
+}
+
+function notifyTaskComplete(message) {
+  if (localStorage.getItem('aurex_notify') !== 'true') return;
+  showAurexNotification('Aurex', message || 'Sua tarefa foi concluída.');
 }
 
 // ========== PAINEL DE CONFIGURAÇÕES ==========
@@ -2006,6 +2028,10 @@ function setupSettingsPanel() {
     notifToggle.checked = localStorage.getItem('aurex_notify') === 'true';
     notifToggle.addEventListener('change', function () {
       localStorage.setItem('aurex_notify', notifToggle.checked ? 'true' : 'false');
+      // Confirmação imediata para o usuário verificar que funciona de verdade
+      if (notifToggle.checked) {
+        showAurexNotification('Aurex', 'Notificações ativadas. Você será avisado quando as tarefas terminarem.');
+      }
     });
   }
 
@@ -2430,6 +2456,129 @@ function stopTeachRecording() {
       });
     });
   });
+}
+
+// ========== ENTRADA POR VOZ (MICROFONE) ==========
+var _voiceRecognition = null;
+var _voiceListening = false;
+var _voiceFinalText = '';
+
+function speechLangCode() {
+  var l = getAurexLang();
+  return l === 'en' ? 'en-US' : (l === 'es' ? 'es-ES' : 'pt-BR');
+}
+
+function setupVoiceInput() {
+  var openBtns = [document.getElementById('main-mic-btn'), document.getElementById('chat-mic-btn')];
+  openBtns.forEach(function (btn) {
+    if (btn) btn.addEventListener('click', openVoiceOverlay);
+  });
+
+  var micToggleBtn = document.getElementById('voice-mic');
+  if (micToggleBtn) micToggleBtn.addEventListener('click', function () {
+    if (_voiceListening) stopVoiceListening();
+    else startVoiceListening();
+  });
+
+  var closeBtn = document.getElementById('voice-close');
+  var cancelBtn = document.getElementById('voice-cancel');
+  if (closeBtn) closeBtn.addEventListener('click', closeVoiceOverlay);
+  if (cancelBtn) cancelBtn.addEventListener('click', closeVoiceOverlay);
+
+  var sendBtn = document.getElementById('voice-send');
+  if (sendBtn) sendBtn.addEventListener('click', sendVoiceMessage);
+}
+
+function openVoiceOverlay() {
+  var overlay = document.getElementById('voice-overlay');
+  if (!overlay) return;
+  _voiceFinalText = '';
+  var transcriptEl = document.getElementById('voice-transcript');
+  if (transcriptEl) transcriptEl.textContent = '';
+  var rememberEl = document.getElementById('voice-remember');
+  if (rememberEl) rememberEl.checked = false;
+  overlay.classList.remove('hidden');
+  startVoiceListening();
+}
+
+function closeVoiceOverlay() {
+  stopVoiceListening();
+  var overlay = document.getElementById('voice-overlay');
+  if (overlay) overlay.classList.add('hidden');
+}
+
+function startVoiceListening() {
+  var overlay = document.getElementById('voice-overlay');
+  var statusEl = document.getElementById('voice-status');
+  var transcriptEl = document.getElementById('voice-transcript');
+  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+
+  if (!SpeechRec) {
+    if (statusEl) statusEl.textContent = t('voice.micRequired');
+    return;
+  }
+
+  try {
+    _voiceRecognition = new SpeechRec();
+    _voiceRecognition.continuous = true;
+    _voiceRecognition.interimResults = true;
+    _voiceRecognition.lang = speechLangCode();
+
+    _voiceRecognition.onresult = function (event) {
+      var interim = '';
+      for (var i = event.resultIndex; i < event.results.length; i++) {
+        var chunk = event.results[i][0].transcript;
+        if (event.results[i].isFinal) _voiceFinalText += chunk + ' ';
+        else interim += chunk;
+      }
+      if (transcriptEl) transcriptEl.textContent = (_voiceFinalText + interim).trim();
+    };
+    _voiceRecognition.onerror = function (e) {
+      if (statusEl && e && e.error === 'not-allowed') statusEl.textContent = t('voice.micRequired');
+    };
+    _voiceRecognition.onend = function () {
+      // Reinicia automaticamente se ainda estiver no modo de escuta
+      if (_voiceListening) {
+        try { _voiceRecognition.start(); } catch (e) { /* ignore */ }
+      }
+    };
+
+    _voiceRecognition.start();
+    _voiceListening = true;
+    localStorage.setItem('aurex_mic', 'true');
+    if (overlay) overlay.classList.add('listening');
+    if (statusEl) statusEl.textContent = t('voice.listening');
+  } catch (e) {
+    if (statusEl) statusEl.textContent = t('voice.micRequired');
+  }
+}
+
+function stopVoiceListening() {
+  _voiceListening = false;
+  var overlay = document.getElementById('voice-overlay');
+  if (overlay) overlay.classList.remove('listening');
+  if (_voiceRecognition) {
+    try { _voiceRecognition.stop(); } catch (e) { /* ignore */ }
+    _voiceRecognition = null;
+  }
+}
+
+function sendVoiceMessage() {
+  var transcriptEl = document.getElementById('voice-transcript');
+  var rememberEl = document.getElementById('voice-remember');
+  var statusEl = document.getElementById('voice-status');
+  var text = (_voiceFinalText || (transcriptEl ? transcriptEl.textContent : '') || '').trim();
+
+  if (!text) {
+    if (statusEl) statusEl.textContent = t('voice.empty');
+    return;
+  }
+
+  var remember = rememberEl ? rememberEl.checked : false;
+  closeVoiceOverlay();
+  switchToChatMode();
+  // ephemeral=true => não persiste no histórico salvo, a não ser que "lembrar" esteja marcado
+  sendUserMessage(text, { ephemeral: !remember });
 }
 
 // ========== SKILLS SYSTEM ==========
