@@ -2459,13 +2459,31 @@ function stopTeachRecording() {
 }
 
 // ========== ENTRADA POR VOZ (MICROFONE) ==========
+// O reconhecimento de voz do navegador (webkitSpeechRecognition) costuma ser
+// bloqueado dentro do side panel (erro "network"/"not-allowed"). Estratégia:
+//   1) Pedimos a permissão real do microfone via getUserMedia (mantemos o
+//      stream aberto, o que faz o SpeechRecognition receber áudio no painel).
+//   2) Se mesmo assim o serviço bloquear, caímos para rodar o reconhecimento
+//      DENTRO da aba ativa (origem web real), onde a Web Speech API funciona,
+//      e recebemos a transcrição por mensagens.
 var _voiceRecognition = null;
 var _voiceListening = false;
 var _voiceFinalText = '';
+var _voiceStream = null;
+var _voiceMode = null; // 'panel' | 'tab'
 
 function speechLangCode() {
   var l = getAurexLang();
   return l === 'en' ? 'en-US' : (l === 'es' ? 'es-ES' : 'pt-BR');
+}
+
+function _voiceStatus(msg) {
+  var statusEl = document.getElementById('voice-status');
+  if (statusEl) statusEl.textContent = msg;
+}
+function _voiceRenderTranscript(interim) {
+  var transcriptEl = document.getElementById('voice-transcript');
+  if (transcriptEl) transcriptEl.textContent = (_voiceFinalText + (interim || '')).trim();
 }
 
 function setupVoiceInput() {
@@ -2487,14 +2505,24 @@ function setupVoiceInput() {
 
   var sendBtn = document.getElementById('voice-send');
   if (sendBtn) sendBtn.addEventListener('click', sendVoiceMessage);
+
+  // Recebe transcrições/erros quando o reconhecimento roda na aba ativa
+  chrome.runtime.onMessage.addListener(function (request) {
+    if (!_voiceListening || _voiceMode !== 'tab') return;
+    if (request && request.type === 'aurex_voice_transcript') {
+      if (request.final) _voiceFinalText += request.final;
+      _voiceRenderTranscript(request.interim || '');
+    } else if (request && request.type === 'aurex_voice_error') {
+      _handleVoiceError(request.error, true);
+    }
+  });
 }
 
 function openVoiceOverlay() {
   var overlay = document.getElementById('voice-overlay');
   if (!overlay) return;
   _voiceFinalText = '';
-  var transcriptEl = document.getElementById('voice-transcript');
-  if (transcriptEl) transcriptEl.textContent = '';
+  _voiceRenderTranscript('');
   var rememberEl = document.getElementById('voice-remember');
   if (rememberEl) rememberEl.checked = false;
   overlay.classList.remove('hidden');
@@ -2509,16 +2537,44 @@ function closeVoiceOverlay() {
 
 function startVoiceListening() {
   var overlay = document.getElementById('voice-overlay');
-  var statusEl = document.getElementById('voice-status');
-  var transcriptEl = document.getElementById('voice-transcript');
-  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  _voiceStatus(t('voice.starting'));
 
+  // 1) Garante a permissão real do microfone (prompt do Chrome) e mantém o
+  //    stream aberto enquanto escuta.
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return _startPanelRecognition(); // tenta mesmo assim
+  }
+
+  navigator.mediaDevices.getUserMedia({ audio: true })
+    .then(function (stream) {
+      _voiceStream = stream;
+      localStorage.setItem('aurex_mic', 'true');
+      _voiceListening = true;
+      if (overlay) overlay.classList.add('listening');
+      _startPanelRecognition();
+    })
+    .catch(function (err) {
+      var name = err && err.name ? err.name : '';
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        _voiceStatus(t('voice.denied'));
+      } else if (name === 'NotFoundError') {
+        _voiceStatus(t('voice.unsupported'));
+      } else {
+        _voiceStatus(t('voice.denied'));
+      }
+    });
+}
+
+function _startPanelRecognition() {
+  var overlay = document.getElementById('voice-overlay');
+  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRec) {
-    if (statusEl) statusEl.textContent = t('voice.micRequired');
-    return;
+    // Sem API no painel: tenta direto pela aba ativa
+    return _startTabRecognition();
   }
 
   try {
+    _voiceMode = 'panel';
     _voiceRecognition = new SpeechRec();
     _voiceRecognition.continuous = true;
     _voiceRecognition.interimResults = true;
@@ -2531,46 +2587,135 @@ function startVoiceListening() {
         if (event.results[i].isFinal) _voiceFinalText += chunk + ' ';
         else interim += chunk;
       }
-      if (transcriptEl) transcriptEl.textContent = (_voiceFinalText + interim).trim();
+      _voiceRenderTranscript(interim);
     };
     _voiceRecognition.onerror = function (e) {
-      if (statusEl && e && e.error === 'not-allowed') statusEl.textContent = t('voice.micRequired');
+      _handleVoiceError(e && e.error, false);
     };
     _voiceRecognition.onend = function () {
-      // Reinicia automaticamente se ainda estiver no modo de escuta
-      if (_voiceListening) {
+      if (_voiceListening && _voiceMode === 'panel') {
         try { _voiceRecognition.start(); } catch (e) { /* ignore */ }
       }
     };
 
     _voiceRecognition.start();
     _voiceListening = true;
-    localStorage.setItem('aurex_mic', 'true');
     if (overlay) overlay.classList.add('listening');
-    if (statusEl) statusEl.textContent = t('voice.listening');
+    _voiceStatus(t('voice.listening'));
   } catch (e) {
-    if (statusEl) statusEl.textContent = t('voice.micRequired');
+    _startTabRecognition();
   }
 }
 
+// Trata erros do reconhecimento. Em bloqueios típicos do painel (network /
+// service-not-allowed), migra automaticamente para a aba ativa.
+function _handleVoiceError(error, fromTab) {
+  if (error === 'no-speech' || error === 'aborted') return; // ignorar ruído
+  if (!fromTab && (error === 'network' || error === 'service-not-allowed' || error === 'audio-capture')) {
+    _voiceStatus(t('voice.network'));
+    // Para o reconhecimento do painel e tenta pela aba
+    _voiceMode = null;
+    if (_voiceRecognition) { try { _voiceRecognition.stop(); } catch (e) {} _voiceRecognition = null; }
+    _startTabRecognition();
+    return;
+  }
+  if (error === 'not-allowed' || error === 'service-not-allowed') {
+    _voiceStatus(t('voice.denied'));
+  } else if (error === 'network') {
+    _voiceStatus(t('voice.network'));
+  } else if (error) {
+    _voiceStatus(t('voice.listening'));
+  }
+}
+
+// Roda webkitSpeechRecognition DENTRO da aba ativa (origem web real)
+function _startTabRecognition() {
+  chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+    var tab = tabs && tabs[0];
+    var bad = !tab || !tab.url || /^(chrome|edge|about|chrome-extension|devtools|view-source):/.test(tab.url);
+    if (bad) {
+      _voiceStatus(t('voice.noTab'));
+      return;
+    }
+    _voiceMode = 'tab';
+    _voiceListening = true;
+    var overlay = document.getElementById('voice-overlay');
+    if (overlay) overlay.classList.add('listening');
+    _voiceStatus(t('voice.listening'));
+
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: function (lang) {
+        try {
+          var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+          if (!SR) { chrome.runtime.sendMessage({ type: 'aurex_voice_error', error: 'unsupported' }); return; }
+          if (window.__aurexVoiceRec) { try { window.__aurexVoiceRec.stop(); } catch (e) {} }
+          window.__aurexVoiceActive = true;
+          var rec = new SR();
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.lang = lang;
+          rec.onresult = function (event) {
+            var finalT = '', interim = '';
+            for (var i = event.resultIndex; i < event.results.length; i++) {
+              var tr = event.results[i][0].transcript;
+              if (event.results[i].isFinal) finalT += tr + ' '; else interim += tr;
+            }
+            chrome.runtime.sendMessage({ type: 'aurex_voice_transcript', final: finalT, interim: interim });
+          };
+          rec.onerror = function (e) { chrome.runtime.sendMessage({ type: 'aurex_voice_error', error: e && e.error }); };
+          rec.onend = function () { if (window.__aurexVoiceActive) { try { rec.start(); } catch (e) {} } };
+          rec.start();
+          window.__aurexVoiceRec = rec;
+        } catch (err) {
+          chrome.runtime.sendMessage({ type: 'aurex_voice_error', error: String(err) });
+        }
+      },
+      args: [speechLangCode()]
+    }, function () {
+      if (chrome.runtime.lastError) _voiceStatus(t('voice.noTab'));
+    });
+  });
+}
+
+function _stopTabRecognition() {
+  chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+    var tab = tabs && tabs[0];
+    if (!tab || !tab.id) return;
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: function () {
+        window.__aurexVoiceActive = false;
+        if (window.__aurexVoiceRec) { try { window.__aurexVoiceRec.stop(); } catch (e) {} window.__aurexVoiceRec = null; }
+      }
+    }, function () { void chrome.runtime.lastError; });
+  });
+}
+
 function stopVoiceListening() {
+  var wasTab = _voiceMode === 'tab';
   _voiceListening = false;
+  _voiceMode = null;
   var overlay = document.getElementById('voice-overlay');
   if (overlay) overlay.classList.remove('listening');
   if (_voiceRecognition) {
     try { _voiceRecognition.stop(); } catch (e) { /* ignore */ }
     _voiceRecognition = null;
   }
+  if (_voiceStream) {
+    _voiceStream.getTracks().forEach(function (track) { track.stop(); });
+    _voiceStream = null;
+  }
+  if (wasTab) _stopTabRecognition();
 }
 
 function sendVoiceMessage() {
   var transcriptEl = document.getElementById('voice-transcript');
   var rememberEl = document.getElementById('voice-remember');
-  var statusEl = document.getElementById('voice-status');
   var text = (_voiceFinalText || (transcriptEl ? transcriptEl.textContent : '') || '').trim();
 
   if (!text) {
-    if (statusEl) statusEl.textContent = t('voice.empty');
+    _voiceStatus(t('voice.empty'));
     return;
   }
 

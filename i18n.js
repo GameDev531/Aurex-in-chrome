@@ -110,7 +110,12 @@ const TRANSLATIONS = {
     "voice.cancel": "Cancelar",
     "voice.micRequired": "Ative o microfone nas Configurações para usar a voz.",
     "voice.empty": "Nada foi capturado. Tente de novo.",
-    "voice.title": "Fale com o Aurex"
+    "voice.title": "Fale com o Aurex",
+    "voice.denied": "Permissão de microfone negada. Clique no cadeado da barra e permita o microfone.",
+    "voice.unsupported": "Seu navegador não suporta reconhecimento de voz.",
+    "voice.network": "Sem conexão com o serviço de voz do navegador. Tentando pela aba ativa...",
+    "voice.noTab": "Abra uma página web normal (ex: google.com) na aba ativa para usar a voz.",
+    "voice.starting": "Pedindo acesso ao microfone..."
   },
   en: {
     "app.name": "Aurex",
@@ -202,7 +207,12 @@ const TRANSLATIONS = {
     "voice.cancel": "Cancel",
     "voice.micRequired": "Enable the microphone in Settings to use voice.",
     "voice.empty": "Nothing was captured. Try again.",
-    "voice.title": "Talk to Aurex"
+    "voice.title": "Talk to Aurex",
+    "voice.denied": "Microphone permission denied. Click the lock in the address bar and allow the microphone.",
+    "voice.unsupported": "Your browser does not support speech recognition.",
+    "voice.network": "No connection to the browser's speech service. Trying via the active tab...",
+    "voice.noTab": "Open a normal web page (e.g. google.com) in the active tab to use voice.",
+    "voice.starting": "Requesting microphone access..."
   },
   es: {
     "app.name": "Aurex",
@@ -294,7 +304,12 @@ const TRANSLATIONS = {
     "voice.cancel": "Cancelar",
     "voice.micRequired": "Activa el micrófono en Configuración para usar la voz.",
     "voice.empty": "No se capturó nada. Inténtalo de nuevo.",
-    "voice.title": "Habla con Aurex"
+    "voice.title": "Habla con Aurex",
+    "voice.denied": "Permiso de micrófono denegado. Haz clic en el candado de la barra y permite el micrófono.",
+    "voice.unsupported": "Tu navegador no admite el reconocimiento de voz.",
+    "voice.network": "Sin conexión con el servicio de voz del navegador. Probando en la pestaña activa...",
+    "voice.noTab": "Abre una página web normal (ej: google.com) en la pestaña activa para usar la voz.",
+    "voice.starting": "Solicitando acceso al micrófono..."
   }
 };
 
