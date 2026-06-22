@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="popup.css">
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=Playfair+Display:ital,wght@0,400;0,600;1,400&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+  <!-- DOMPurify: Obrigatório para a renderização segura de widgets interativos -->
+</head>
+<body>
+  <div class="app-container">
+    
+    <!-- Sidebar -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-header">
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px;">
+          <span style="font-size: 15px; font-weight: 600; color: var(--text-primary);">Aurex</span>
+          <button id="close-sidebar" class="icon-btn" title="Fechar menu">
+            <i class="fa-solid fa-xmark"></i>
+          </button>
+        </div>
+        <button class="new-chat-btn" id="new-chat-btn">
+          <i class="fa-solid fa-plus"></i> Novo Chat
+        </button>
+      </div>
+      
+      <div class="search-container">
+        <i class="fa-solid fa-search search-icon"></i>
+        <input type="text" id="chat-search" class="search-input" placeholder="Pesquisar chats...">
+      </div>
+
+      <div class="history-section">
+        <div class="history-label">Recentes</div>
+        <ul class="chat-list" id="chat-list">
+          <!-- Chat items generated dynamically -->
+        </ul>
+      </div>
+
+      <div class="sidebar-footer">
+        <div class="user-profile">
+          <div class="avatar">G</div>
+          <span class="username" id="sidebar-username">Giovanni</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="main-content">
+      <header class="top-header">
+        <button id="toggle-sidebar" class="icon-btn" title="Alternar Barra Lateral">
+          <i class="fa-solid fa-bars"></i>
+        </button>
+        <div class="model-selector">
+          AurexAI Adaptive
+        </div>
+      </header>
+
+      <!-- Welcome Screen (Visible only on new chat) -->
+      <div class="welcome-screen" id="welcome-screen">
+        <div class="greeting">
+          <h1 id="dynamic-greeting">Bom dia, Giovanni!</h1>
+        </div>
+        
+        <div class="input-container center-input">
+          <div class="input-wrapper">
+            <textarea id="main-input" placeholder="Como posso ajudar você hoje no navegador?" rows="1"></textarea>
+            <button id="send-btn" class="send-btn"><i class="fa-solid fa-arrow-up"></i></button>
+          </div>
+          
+          <div class="skills-container">
+            <button class="skill-btn"><i class="fa-solid fa-code"></i> Analisar DOM</button>
+            <button class="skill-btn"><i class="fa-solid fa-pen-to-square"></i> Preencher Formulário</button>
+            <button class="skill-btn"><i class="fa-solid fa-calendar-check"></i> Agendar Tarefa</button>
+            <button class="skill-btn"><i class="fa-solid fa-camera"></i> Tirar Print</button>
+            <button class="skill-btn" id="btn-more-skills"><i class="fa-solid fa-plus"></i> Mais skills...</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat Interface (Hidden initially) -->
+      <div class="chat-interface" id="chat-interface" style="display: none;">
+        <div class="messages-container" id="messages-container">
+          <!-- Messages will appear here -->
+        </div>
+        
+        <div class="chat-input-area">
+          <div class="input-wrapper">
+            <textarea id="chat-bottom-input" placeholder="Digite sua mensagem para o Aurex..." rows="1"></textarea>
+            <button id="chat-send-btn" class="send-btn"><i class="fa-solid fa-arrow-up"></i></button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Skills Panel (Hidden initially) -->
+      <div class="skills-panel hidden" id="skills-panel">
+        <div class="skills-header">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <h2 style="font-size: 16px; font-weight: 600; color: var(--text-accent);">Habilidades (Skills)</h2>
+            <button id="close-skills" class="icon-btn" title="Fechar">
+              <i class="fa-solid fa-xmark"></i>
+            </button>
+          </div>
+          <div class="skills-tabs">
+            <button class="skills-tab active" id="tab-minhas-skills">Minhas Skills</button>
+            <button class="skills-tab" id="tab-lojinha">Lojinha</button>
+          </div>
+        </div>
+
+        <!-- Minhas Skills Tab -->
+        <div class="skills-content active" id="content-minhas-skills">
+          <div class="skills-actions">
+            <button id="btn-create-skill" class="action-btn"><i class="fa-solid fa-plus"></i> Criar Skill</button>
+            <label class="action-btn" for="upload-skill">
+              <i class="fa-solid fa-upload"></i> Importar .txt
+              <input type="file" id="upload-skill" accept=".txt,.md" style="display: none;">
+            </label>
+          </div>
+          
+          <div class="create-skill-form hidden" id="create-skill-form">
+            <input type="text" id="skill-name" placeholder="Nome da skill (ex: QA Tester)">
+            <input type="text" id="skill-desc" placeholder="Descrição curta">
+            <textarea id="skill-inst" placeholder="Instruções para o Aurex..." rows="3"></textarea>
+            <div style="display: flex; gap: 8px; margin-top: 8px;">
+              <button class="action-btn primary" id="save-skill-btn">Salvar</button>
+              <button class="action-btn" id="cancel-skill-btn">Cancelar</button>
+            </div>
+          </div>
+
+          <div class="my-skills-list" id="my-skills-list">
+            <!-- Skills do usuário geradas dinamicamente -->
+          </div>
+        </div>
+
+        <!-- Lojinha Tab -->
+        <div class="skills-content" id="content-lojinha" style="display: none;">
+          <section class="store-intro">
+            <div class="store-intro-copy">
+              <span class="store-kicker"><i class="fa-solid fa-wand-magic-sparkles"></i> Skills profissionais</span>
+              <h3>Especialize o Aurex por tarefa</h3>
+              <p>Instale modos prontos para pesquisa, QA, produto, dados, acessibilidade e documentacao.</p>
+            </div>
+            <div class="store-metrics" id="store-metrics"></div>
+          </section>
+          <div class="store-filter-row" id="store-filter-row"></div>
+          <div class="store-skills-list" id="store-skills-list">
+            <!-- Catálogo gerado dinamicamente -->
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <script src="dompurify.min.js"></script>
+  <script src="gsap.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>
