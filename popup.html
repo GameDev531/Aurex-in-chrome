@@ -90,7 +90,6 @@
         <div class="input-container center-input">
           <div class="input-wrapper">
             <textarea id="main-input" data-i18n-ph="welcome.placeholder" placeholder="Como posso ajudar você hoje no navegador?" rows="1"></textarea>
-            <button id="main-mic-btn" class="mic-btn" data-i18n-title="voice.title" title="Falar com o Aurex"><i class="fa-solid fa-microphone"></i></button>
             <button id="send-btn" class="send-btn"><i class="fa-solid fa-arrow-up"></i></button>
           </div>
 
@@ -114,7 +113,6 @@
         <div class="chat-input-area">
           <div class="input-wrapper">
             <textarea id="chat-bottom-input" data-i18n-ph="chat.placeholder" placeholder="Digite sua mensagem para o Aurex..." rows="1"></textarea>
-            <button id="chat-mic-btn" class="mic-btn" data-i18n-title="voice.title" title="Falar com o Aurex"><i class="fa-solid fa-microphone"></i></button>
             <button id="chat-send-btn" class="send-btn"><i class="fa-solid fa-arrow-up"></i></button>
           </div>
         </div>
@@ -199,6 +197,22 @@
         <div class="settings-body">
           <!-- GERAL -->
           <div class="settings-section active" id="settings-general">
+            <div class="setting-block">
+              <div class="setting-title" data-i18n="settings.server">Servidor</div>
+              <div class="setting-desc" data-i18n="settings.server.desc">Endereço do servidor que processa as conversas. Use o seu servidor local se estiver rodando no terminal.</div>
+              <input type="text" id="server-url-input" class="setting-select" data-i18n-ph="settings.server.urlPh" placeholder="http://localhost:3000/v1">
+              <label class="setting-toggle-row" style="margin-top:12px;">
+                <div>
+                  <div class="setting-toggle-label" data-i18n="settings.server.local">Servidor local (sem login)</div>
+                  <div class="setting-toggle-sub" data-i18n="settings.server.localDesc">Não tenta fazer login OAuth — envia direto ao servidor</div>
+                </div>
+                <span class="switch"><input type="checkbox" id="toggle-local-server"><span class="slider"></span></span>
+              </label>
+              <div class="setting-toggle-label" style="margin-top:12px;" data-i18n="settings.server.key">Chave da API (opcional)</div>
+              <input type="text" id="api-key-input" class="setting-select" style="margin-top:6px;" data-i18n-ph="settings.server.keyPh" placeholder="Cole sua chave se o servidor exigir">
+              <button class="action-btn primary" id="save-server" style="margin-top:12px;" data-i18n="settings.server.save">Salvar servidor</button>
+            </div>
+
             <div class="setting-block">
               <div class="setting-title" data-i18n="settings.language">Idioma</div>
               <div class="setting-desc" data-i18n="settings.language.desc">Muda o idioma da interface e das respostas do Aurex</div>
@@ -336,30 +350,6 @@
 
   <!-- Menu de atalhos (aparece ao digitar / no chat) -->
   <div class="slash-menu hidden" id="slash-menu"></div>
-
-  <!-- Overlay de voz (microfone) -->
-  <div class="voice-overlay hidden" id="voice-overlay">
-    <div class="voice-card">
-      <button class="voice-close icon-btn" id="voice-close"><i class="fa-solid fa-xmark"></i></button>
-      <div class="voice-title" data-i18n="voice.title">Fale com o Aurex</div>
-      <div class="voice-anim" id="voice-anim">
-        <span class="voice-ring"></span>
-        <span class="voice-ring"></span>
-        <span class="voice-ring"></span>
-        <button class="voice-mic" id="voice-mic"><i class="fa-solid fa-microphone"></i></button>
-      </div>
-      <div class="voice-status" id="voice-status" data-i18n="voice.tapToStart">Toque no microfone e fale</div>
-      <div class="voice-transcript" id="voice-transcript"></div>
-      <label class="voice-remember">
-        <span class="switch"><input type="checkbox" id="voice-remember"><span class="slider"></span></span>
-        <span data-i18n="voice.remember">Lembrar nesta conversa</span>
-      </label>
-      <div class="voice-actions">
-        <button class="action-btn" id="voice-cancel" data-i18n="voice.cancel">Cancelar</button>
-        <button class="action-btn primary" id="voice-send" data-i18n="voice.send">Enviar</button>
-      </div>
-    </div>
-  </div>
 
   <script src="dompurify.min.js"></script>
   <script src="gsap.min.js"></script>

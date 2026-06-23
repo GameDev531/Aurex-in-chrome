@@ -395,7 +395,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupModeSelector();
   setupSettingsPanel();
   setupTeachPanel();
-  setupVoiceInput();
+  setupTabSpeech();
   setupMotion();
   // Esconde o menu de atalhos ao clicar fora ou perder o foco
   document.addEventListener('click', function (e) {
@@ -1490,7 +1490,21 @@ async function processLLMLoop(iterationCount = 0) {
     MotionUI.enterMessage(loadingDiv);
     MotionUI.animateThinking(loadingDiv);
 
-    let accessToken = await getAurexAccessToken();
+    // Monta endpoint e autenticação conforme as Configurações de servidor.
+    // - Se houver "Chave da API", usa Bearer com essa chave.
+    // - Se "Servidor local (sem login)" estiver ligado, não envia Authorization.
+    // - Caso contrário, faz o login OAuth padrão do Aurex.
+    var apiBase = (localStorage.getItem('aurex_api_base_url') || 'https://api.aurexai.com/v1').replace(/\/+$/, '');
+    var apiUrl = apiBase + '/chat/completions';
+    var requestHeaders = { "Content-Type": "application/json" };
+    var apiKey = (localStorage.getItem('aurex_api_key') || '').trim();
+    var localMode = localStorage.getItem('aurex_local_mode') === 'true';
+    if (apiKey) {
+      requestHeaders["Authorization"] = "Bearer " + apiKey;
+    } else if (!localMode) {
+      let accessToken = await getAurexAccessToken();
+      requestHeaders["Authorization"] = "Bearer " + accessToken;
+    }
 
     // Prepara payload injetando skills ativas, modo, idioma e personalidade
     _ensureValidToolCallHistory();
@@ -1530,12 +1544,9 @@ async function processLLMLoop(iterationCount = 0) {
       requestMessages[0] = { ...requestMessages[0], content: requestMessages[0].content + extraDirectives };
     }
 
-    let response = await fetch(AUREX_API_URL, {
+    let response = await fetch(apiUrl, {
       method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${accessToken}`
-      },
+      headers: requestHeaders,
       body: JSON.stringify({
         model: "AurexAI",
         messages: requestMessages,
@@ -1733,10 +1744,13 @@ async function processLLMLoop(iterationCount = 0) {
     if (loadingDiv) loadingDiv.remove();
 
     const fetchFailed = error instanceof TypeError && error.message === "Failed to fetch";
+    var apiBaseShown = (localStorage.getItem('aurex_api_base_url') || 'https://api.aurexai.com/v1');
     if (fetchFailed) {
-      appendServiceUnavailableMessage();
+      // N\u00e3o conseguiu nem conectar: provavelmente URL errada do servidor ou CORS
+      appendMessageToUI('assistant', "\u274c N\u00e3o consegui conectar ao servidor (" + escapeHtml(apiBaseShown) + ").\n\nVerifique em Configura\u00e7\u00f5es \u25b8 Geral \u25b8 Servidor:\n\u2022 se a URL do servidor est\u00e1 correta (ex: http://localhost:3000/v1);\n\u2022 se o servidor est\u00e1 rodando e aceita requisi\u00e7\u00f5es da extens\u00e3o (CORS);\n\u2022 marque \"Servidor local (sem login)\" se ele n\u00e3o usa OAuth.");
     } else {
-      appendMessageToUI('assistant', "\u274c Erro de conex\u00e3o com o servidor. Tente novamente mais tarde.");
+      var detail = error && error.message ? error.message : String(error);
+      appendMessageToUI('assistant', "\u274c Erro ao falar com o servidor: " + escapeHtml(detail) + "\n\nSe estiver usando um servidor local, abra Configura\u00e7\u00f5es \u25b8 Geral \u25b8 Servidor e marque \"Servidor local (sem login)\".");
     }
     console.warn("[Aurex] Falha no loop do modelo:", error && error.message ? error.message : error);
   }
@@ -2072,6 +2086,26 @@ function setupSettingsPanel() {
     });
   }
 
+  // Servidor / conexão
+  var serverUrlInput = document.getElementById('server-url-input');
+  var localToggle = document.getElementById('toggle-local-server');
+  var apiKeyInput = document.getElementById('api-key-input');
+  var saveServer = document.getElementById('save-server');
+  if (serverUrlInput) serverUrlInput.value = localStorage.getItem('aurex_api_base_url') || '';
+  if (localToggle) localToggle.checked = localStorage.getItem('aurex_local_mode') === 'true';
+  if (apiKeyInput) apiKeyInput.value = localStorage.getItem('aurex_api_key') || '';
+  if (saveServer) {
+    saveServer.addEventListener('click', function () {
+      var url = (serverUrlInput ? serverUrlInput.value : '').trim().replace(/\/+$/, '');
+      if (url) localStorage.setItem('aurex_api_base_url', url); else localStorage.removeItem('aurex_api_base_url');
+      localStorage.setItem('aurex_local_mode', (localToggle && localToggle.checked) ? 'true' : 'false');
+      var key = (apiKeyInput ? apiKeyInput.value : '').trim();
+      if (key) localStorage.setItem('aurex_api_key', key); else localStorage.removeItem('aurex_api_key');
+      saveServer.textContent = '✓';
+      setTimeout(function () { saveServer.textContent = t('settings.server.save'); }, 1200);
+    });
+  }
+
   // Formato de arquivo
   var fileSelect = document.getElementById('file-format-select');
   if (fileSelect) {
@@ -2361,7 +2395,6 @@ function showSlashShortcutsOptions() {
 }
 
 // ========== ENSINAR AUREX (Teach) ==========
-var _teachRecognition = null;
 var _teachRecording = false;
 var _teachTranscript = '';
 
@@ -2403,30 +2436,21 @@ function startTeachRecording() {
   if (label) label.textContent = t('teach.stop');
   if (statusEl) statusEl.textContent = t('teach.recording');
 
-  // Narração por voz (Web Speech API) se o microfone estiver habilitado
-  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (localStorage.getItem('aurex_mic') === 'true' && SpeechRec) {
-    try {
-      _teachRecognition = new SpeechRec();
-      _teachRecognition.continuous = true;
-      _teachRecognition.interimResults = true;
-      _teachRecognition.lang = getAurexLang() === 'en' ? 'en-US' : (getAurexLang() === 'es' ? 'es-ES' : 'pt-BR');
-      _teachRecognition.onresult = function (event) {
-        var finalText = '';
-        for (var i = event.resultIndex; i < event.results.length; i++) {
-          if (event.results[i].isFinal) finalText += event.results[i][0].transcript + ' ';
-        }
-        if (finalText) {
-          _teachTranscript += finalText;
-          if (transcriptEl) transcriptEl.textContent = _teachTranscript;
-        }
-      };
-      _teachRecognition.onerror = function () { /* ignore */ };
-      _teachRecognition.start();
-    } catch (e) { _teachRecognition = null; }
-  } else if (statusEl && localStorage.getItem('aurex_mic') !== 'true') {
-    statusEl.textContent = t('teach.micOff');
-  }
+  // Narração por voz: roda o reconhecimento DENTRO da aba ativa (onde o usuário
+  // está demonstrando), pois a Web Speech API não funciona no side panel.
+  startTabSpeech(
+    function (finalText, interim) {
+      if (finalText) _teachTranscript += finalText;
+      if (transcriptEl) transcriptEl.textContent = (_teachTranscript + (interim || '')).trim();
+    },
+    function (err) {
+      if (!statusEl) return;
+      if (err === 'no-tab' || err === 'inject-failed') statusEl.textContent = t('voice.noTab');
+      else if (err === 'unsupported') statusEl.textContent = t('voice.unsupported');
+      else if (err === 'not-allowed' || err === 'service-not-allowed') statusEl.textContent = t('voice.denied');
+      // Outros erros: continua gravando o fluxo, apenas sem a narração por voz.
+    }
+  );
 }
 
 function stopTeachRecording() {
@@ -2438,10 +2462,7 @@ function stopTeachRecording() {
   if (toggle) toggle.classList.remove('recording');
   if (label) label.textContent = t('teach.start');
 
-  if (_teachRecognition) {
-    try { _teachRecognition.stop(); } catch (e) { /* ignore */ }
-    _teachRecognition = null;
-  }
+  stopTabSpeech();
 
   var name = (nameEl && nameEl.value.trim()) || ('fluxo_' + Date.now());
   chrome.runtime.sendMessage({ type: 'stop_recording' }, function (response) {
@@ -2458,191 +2479,39 @@ function stopTeachRecording() {
   });
 }
 
-// ========== ENTRADA POR VOZ (MICROFONE) ==========
-// O reconhecimento de voz do navegador (webkitSpeechRecognition) costuma ser
-// bloqueado dentro do side panel (erro "network"/"not-allowed"). Estratégia:
-//   1) Pedimos a permissão real do microfone via getUserMedia (mantemos o
-//      stream aberto, o que faz o SpeechRecognition receber áudio no painel).
-//   2) Se mesmo assim o serviço bloquear, caímos para rodar o reconhecimento
-//      DENTRO da aba ativa (origem web real), onde a Web Speech API funciona,
-//      e recebemos a transcrição por mensagens.
-var _voiceRecognition = null;
-var _voiceListening = false;
-var _voiceFinalText = '';
-var _voiceStream = null;
-var _voiceMode = null; // 'panel' | 'tab'
+// ========== RECONHECIMENTO DE VOZ NA ABA ATIVA ==========
+// O webkitSpeechRecognition e bloqueado dentro do side panel (erro
+// "network"/unsupported), mas funciona dentro de uma aba web normal. Por isso,
+// no "Ensinar Aurex" rodamos o reconhecimento DENTRO da aba ativa (onde o
+// usuario demonstra o fluxo) e recebemos a transcricao por mensagens.
+var _tabSpeechActive = false;
+var _tabSpeechOnText = null;
+var _tabSpeechOnError = null;
 
 function speechLangCode() {
   var l = getAurexLang();
   return l === 'en' ? 'en-US' : (l === 'es' ? 'es-ES' : 'pt-BR');
 }
 
-function _voiceStatus(msg) {
-  var statusEl = document.getElementById('voice-status');
-  if (statusEl) statusEl.textContent = msg;
-}
-function _voiceRenderTranscript(interim) {
-  var transcriptEl = document.getElementById('voice-transcript');
-  if (transcriptEl) transcriptEl.textContent = (_voiceFinalText + (interim || '')).trim();
-}
-
-function setupVoiceInput() {
-  var openBtns = [document.getElementById('main-mic-btn'), document.getElementById('chat-mic-btn')];
-  openBtns.forEach(function (btn) {
-    if (btn) btn.addEventListener('click', openVoiceOverlay);
-  });
-
-  var micToggleBtn = document.getElementById('voice-mic');
-  if (micToggleBtn) micToggleBtn.addEventListener('click', function () {
-    if (_voiceListening) stopVoiceListening();
-    else startVoiceListening();
-  });
-
-  var closeBtn = document.getElementById('voice-close');
-  var cancelBtn = document.getElementById('voice-cancel');
-  if (closeBtn) closeBtn.addEventListener('click', closeVoiceOverlay);
-  if (cancelBtn) cancelBtn.addEventListener('click', closeVoiceOverlay);
-
-  var sendBtn = document.getElementById('voice-send');
-  if (sendBtn) sendBtn.addEventListener('click', sendVoiceMessage);
-
-  // Recebe transcrições/erros quando o reconhecimento roda na aba ativa
+function setupTabSpeech() {
   chrome.runtime.onMessage.addListener(function (request) {
-    if (!_voiceListening || _voiceMode !== 'tab') return;
+    if (!_tabSpeechActive) return;
     if (request && request.type === 'aurex_voice_transcript') {
-      if (request.final) _voiceFinalText += request.final;
-      _voiceRenderTranscript(request.interim || '');
+      if (_tabSpeechOnText) _tabSpeechOnText(request.final || '', request.interim || '');
     } else if (request && request.type === 'aurex_voice_error') {
-      _handleVoiceError(request.error, true);
+      if (_tabSpeechOnError) _tabSpeechOnError(request.error);
     }
   });
 }
 
-function openVoiceOverlay() {
-  var overlay = document.getElementById('voice-overlay');
-  if (!overlay) return;
-  _voiceFinalText = '';
-  _voiceRenderTranscript('');
-  var rememberEl = document.getElementById('voice-remember');
-  if (rememberEl) rememberEl.checked = false;
-  overlay.classList.remove('hidden');
-  startVoiceListening();
-}
-
-function closeVoiceOverlay() {
-  stopVoiceListening();
-  var overlay = document.getElementById('voice-overlay');
-  if (overlay) overlay.classList.add('hidden');
-}
-
-function startVoiceListening() {
-  var overlay = document.getElementById('voice-overlay');
-  _voiceStatus(t('voice.starting'));
-
-  // 1) Garante a permissão real do microfone (prompt do Chrome) e mantém o
-  //    stream aberto enquanto escuta.
-  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-    return _startPanelRecognition(); // tenta mesmo assim
-  }
-
-  navigator.mediaDevices.getUserMedia({ audio: true })
-    .then(function (stream) {
-      _voiceStream = stream;
-      localStorage.setItem('aurex_mic', 'true');
-      _voiceListening = true;
-      if (overlay) overlay.classList.add('listening');
-      _startPanelRecognition();
-    })
-    .catch(function (err) {
-      var name = err && err.name ? err.name : '';
-      if (name === 'NotAllowedError' || name === 'SecurityError') {
-        _voiceStatus(t('voice.denied'));
-      } else if (name === 'NotFoundError') {
-        _voiceStatus(t('voice.unsupported'));
-      } else {
-        _voiceStatus(t('voice.denied'));
-      }
-    });
-}
-
-function _startPanelRecognition() {
-  var overlay = document.getElementById('voice-overlay');
-  var SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRec) {
-    // Sem API no painel: tenta direto pela aba ativa
-    return _startTabRecognition();
-  }
-
-  try {
-    _voiceMode = 'panel';
-    _voiceRecognition = new SpeechRec();
-    _voiceRecognition.continuous = true;
-    _voiceRecognition.interimResults = true;
-    _voiceRecognition.lang = speechLangCode();
-
-    _voiceRecognition.onresult = function (event) {
-      var interim = '';
-      for (var i = event.resultIndex; i < event.results.length; i++) {
-        var chunk = event.results[i][0].transcript;
-        if (event.results[i].isFinal) _voiceFinalText += chunk + ' ';
-        else interim += chunk;
-      }
-      _voiceRenderTranscript(interim);
-    };
-    _voiceRecognition.onerror = function (e) {
-      _handleVoiceError(e && e.error, false);
-    };
-    _voiceRecognition.onend = function () {
-      if (_voiceListening && _voiceMode === 'panel') {
-        try { _voiceRecognition.start(); } catch (e) { /* ignore */ }
-      }
-    };
-
-    _voiceRecognition.start();
-    _voiceListening = true;
-    if (overlay) overlay.classList.add('listening');
-    _voiceStatus(t('voice.listening'));
-  } catch (e) {
-    _startTabRecognition();
-  }
-}
-
-// Trata erros do reconhecimento. Em bloqueios típicos do painel (network /
-// service-not-allowed), migra automaticamente para a aba ativa.
-function _handleVoiceError(error, fromTab) {
-  if (error === 'no-speech' || error === 'aborted') return; // ignorar ruído
-  if (!fromTab && (error === 'network' || error === 'service-not-allowed' || error === 'audio-capture')) {
-    _voiceStatus(t('voice.network'));
-    // Para o reconhecimento do painel e tenta pela aba
-    _voiceMode = null;
-    if (_voiceRecognition) { try { _voiceRecognition.stop(); } catch (e) {} _voiceRecognition = null; }
-    _startTabRecognition();
-    return;
-  }
-  if (error === 'not-allowed' || error === 'service-not-allowed') {
-    _voiceStatus(t('voice.denied'));
-  } else if (error === 'network') {
-    _voiceStatus(t('voice.network'));
-  } else if (error) {
-    _voiceStatus(t('voice.listening'));
-  }
-}
-
-// Roda webkitSpeechRecognition DENTRO da aba ativa (origem web real)
-function _startTabRecognition() {
+function startTabSpeech(onText, onError) {
   chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
     var tab = tabs && tabs[0];
     var bad = !tab || !tab.url || /^(chrome|edge|about|chrome-extension|devtools|view-source):/.test(tab.url);
-    if (bad) {
-      _voiceStatus(t('voice.noTab'));
-      return;
-    }
-    _voiceMode = 'tab';
-    _voiceListening = true;
-    var overlay = document.getElementById('voice-overlay');
-    if (overlay) overlay.classList.add('listening');
-    _voiceStatus(t('voice.listening'));
-
+    if (bad) { if (onError) onError('no-tab'); return; }
+    _tabSpeechActive = true;
+    _tabSpeechOnText = onText;
+    _tabSpeechOnError = onError;
     chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: function (lang) {
@@ -2673,12 +2542,15 @@ function _startTabRecognition() {
       },
       args: [speechLangCode()]
     }, function () {
-      if (chrome.runtime.lastError) _voiceStatus(t('voice.noTab'));
+      if (chrome.runtime.lastError && onError) onError('inject-failed');
     });
   });
 }
 
-function _stopTabRecognition() {
+function stopTabSpeech() {
+  _tabSpeechActive = false;
+  _tabSpeechOnText = null;
+  _tabSpeechOnError = null;
   chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
     var tab = tabs && tabs[0];
     if (!tab || !tab.id) return;
@@ -2690,40 +2562,6 @@ function _stopTabRecognition() {
       }
     }, function () { void chrome.runtime.lastError; });
   });
-}
-
-function stopVoiceListening() {
-  var wasTab = _voiceMode === 'tab';
-  _voiceListening = false;
-  _voiceMode = null;
-  var overlay = document.getElementById('voice-overlay');
-  if (overlay) overlay.classList.remove('listening');
-  if (_voiceRecognition) {
-    try { _voiceRecognition.stop(); } catch (e) { /* ignore */ }
-    _voiceRecognition = null;
-  }
-  if (_voiceStream) {
-    _voiceStream.getTracks().forEach(function (track) { track.stop(); });
-    _voiceStream = null;
-  }
-  if (wasTab) _stopTabRecognition();
-}
-
-function sendVoiceMessage() {
-  var transcriptEl = document.getElementById('voice-transcript');
-  var rememberEl = document.getElementById('voice-remember');
-  var text = (_voiceFinalText || (transcriptEl ? transcriptEl.textContent : '') || '').trim();
-
-  if (!text) {
-    _voiceStatus(t('voice.empty'));
-    return;
-  }
-
-  var remember = rememberEl ? rememberEl.checked : false;
-  closeVoiceOverlay();
-  switchToChatMode();
-  // ephemeral=true => não persiste no histórico salvo, a não ser que "lembrar" esteja marcado
-  sendUserMessage(text, { ephemeral: !remember });
 }
 
 // ========== SKILLS SYSTEM ==========

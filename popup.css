@@ -1815,7 +1815,7 @@ html, body { font-size: 14px; letter-spacing: 0.1px; }
   background-color: var(--bg-input);
   border-color: var(--border-color);
   box-shadow: var(--shadow-md);
-  padding: 14px 92px 14px 18px;
+  padding: 14px 52px 14px 18px;
 }
 .input-wrapper:focus-within {
   border-color: rgba(224,180,134,0.45);
