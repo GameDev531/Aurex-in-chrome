@@ -1,4 +1,14 @@
-var AUREX_API_BASE_URL = (localStorage.getItem('aurex_api_base_url') || "https://api.aurexai.com/v1").replace(/\/+$/, '');
+// ===========================================================================
+// ENDPOINT DE PRODUÇÃO
+// Troque a URL abaixo pela URL pública do seu aurex-api depois de publicá-lo
+// (ex: "https://aurex-api.onrender.com"). É isso que torna o produto plug-and-play:
+// o usuário instala e já usa, sem configurar nada. O endpoint /chat/completions
+// é adicionado automaticamente — NÃO inclua /chat/completions nem /v1 aqui se o
+// seu servidor expõe a rota na raiz.
+// ===========================================================================
+var AUREX_PRODUCTION_API_BASE = "https://api.aurexai.com";
+
+var AUREX_API_BASE_URL = (localStorage.getItem('aurex_api_base_url') || AUREX_PRODUCTION_API_BASE).replace(/\/+$/, '');
 var AUREX_API_URL = AUREX_API_BASE_URL + "/chat/completions";
 var AUREX_AUTH_STORAGE_KEY = "aurex_auth_tokens";
 
@@ -1491,17 +1501,19 @@ async function processLLMLoop(iterationCount = 0) {
     MotionUI.animateThinking(loadingDiv);
 
     // Monta endpoint e autenticação conforme as Configurações de servidor.
-    // - Se houver "Chave da API", usa Bearer com essa chave.
-    // - Se "Servidor local (sem login)" estiver ligado, não envia Authorization.
-    // - Caso contrário, faz o login OAuth padrão do Aurex.
-    var apiBase = (localStorage.getItem('aurex_api_base_url') || 'https://api.aurexai.com/v1').replace(/\/+$/, '');
+    // PRODUTO (padrão): aponta para o endpoint público e NÃO exige login — o
+    // usuário instala e já usa. A autenticação só acontece se for configurada:
+    // - "Chave da API" preenchida  -> envia Bearer com essa chave
+    // - "Usar login (OAuth)" ligado -> faz o fluxo de login do Aurex
+    // - caso contrário (padrão)     -> sem Authorization (servidor cuida da chave do LLM)
+    var apiBase = (localStorage.getItem('aurex_api_base_url') || AUREX_PRODUCTION_API_BASE).replace(/\/+$/, '');
     var apiUrl = apiBase + '/chat/completions';
     var requestHeaders = { "Content-Type": "application/json" };
     var apiKey = (localStorage.getItem('aurex_api_key') || '').trim();
-    var localMode = localStorage.getItem('aurex_local_mode') === 'true';
+    var useLogin = localStorage.getItem('aurex_use_login') === 'true';
     if (apiKey) {
       requestHeaders["Authorization"] = "Bearer " + apiKey;
-    } else if (!localMode) {
+    } else if (useLogin) {
       let accessToken = await getAurexAccessToken();
       requestHeaders["Authorization"] = "Bearer " + accessToken;
     }
@@ -2092,17 +2104,17 @@ function setupSettingsPanel() {
 
   // Servidor / conexão
   var serverUrlInput = document.getElementById('server-url-input');
-  var localToggle = document.getElementById('toggle-local-server');
+  var loginToggle = document.getElementById('toggle-use-login');
   var apiKeyInput = document.getElementById('api-key-input');
   var saveServer = document.getElementById('save-server');
   if (serverUrlInput) serverUrlInput.value = localStorage.getItem('aurex_api_base_url') || '';
-  if (localToggle) localToggle.checked = localStorage.getItem('aurex_local_mode') === 'true';
+  if (loginToggle) loginToggle.checked = localStorage.getItem('aurex_use_login') === 'true';
   if (apiKeyInput) apiKeyInput.value = localStorage.getItem('aurex_api_key') || '';
   if (saveServer) {
     saveServer.addEventListener('click', function () {
       var url = (serverUrlInput ? serverUrlInput.value : '').trim().replace(/\/+$/, '');
       if (url) localStorage.setItem('aurex_api_base_url', url); else localStorage.removeItem('aurex_api_base_url');
-      localStorage.setItem('aurex_local_mode', (localToggle && localToggle.checked) ? 'true' : 'false');
+      localStorage.setItem('aurex_use_login', (loginToggle && loginToggle.checked) ? 'true' : 'false');
       var key = (apiKeyInput ? apiKeyInput.value : '').trim();
       if (key) localStorage.setItem('aurex_api_key', key); else localStorage.removeItem('aurex_api_key');
       saveServer.textContent = '✓';
