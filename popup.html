@@ -311,8 +311,10 @@
           <div class="settings-section" id="settings-account">
             <div class="setting-block">
               <div class="setting-title" data-i18n="settings.tab.account">Conta</div>
-              <div class="setting-desc" data-i18n="settings.account.desc">Desconecte sua conta Aurex deste navegador</div>
-              <button class="action-btn danger" id="btn-logout"><i class="fa-solid fa-arrow-right-from-bracket"></i> <span data-i18n="settings.account.logout">Sair da conta</span></button>
+              <div class="setting-desc" data-i18n="settings.account.desc">Conecte sua conta Aurex (a mesma do CLI) para usar o assistente.</div>
+              <div class="account-status" id="account-status"></div>
+              <button class="action-btn primary" id="btn-login"><i class="fa-solid fa-right-to-bracket"></i> <span data-i18n="settings.account.connect">Conectar conta</span></button>
+              <button class="action-btn danger" id="btn-logout" style="margin-top:8px;"><i class="fa-solid fa-arrow-right-from-bracket"></i> <span data-i18n="settings.account.logout">Sair da conta</span></button>
             </div>
           </div>
         </div>

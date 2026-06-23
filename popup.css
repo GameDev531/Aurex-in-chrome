@@ -1894,3 +1894,13 @@ input:checked + .slider { background-color: var(--text-accent); }
 
 /* --- Mode caret micro-interaction --- */
 .mode-selector-btn:hover .mode-caret { color: var(--text-accent); }
+
+/* --- Conta (status de login) --- */
+.account-status {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 12px;
+  line-height: 1.5;
+}
+.account-status .account-ok { color: var(--accent-green); margin-right: 4px; }
+.account-status strong { color: var(--text-primary); }

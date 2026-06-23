@@ -1,48 +1,47 @@
 # Publicando o Aurex como produto
 
-Objetivo: **usuário instala a extensão → já usa**, sem configurar nada.
+Objetivo: **usuário instala a extensão → faz login → usa**, sem configurar nada.
 
-Para isso a extensão precisa apontar para um endpoint público (o `aurex-api`
-rodando na nuvem). Hoje o `aurex-api` roda local (`http://127.0.0.1:3030`); os
-passos abaixo o colocam no ar no **Railway** e fazem a extensão usá-lo por padrão.
+A extensão usa o **mesmo login OAuth/PKCE do `aurex-api`** (o mesmo que o Aurex CLI
+usa) e aponta para um endpoint público. Hoje o `aurex-api` roda local
+(`http://127.0.0.1:3030`); os passos abaixo o colocam no ar no **Railway** e fazem
+a extensão usá-lo por padrão.
 
-> Modelo de auth atual: **sem login** (o servidor guarda a chave do LLM). A tela
-> `login.html` já existe como gancho para contas/OAuth reais numa próxima etapa.
+> **Login:** ligado por padrão (`AUREX_REQUIRE_LOGIN_DEFAULT = true` em `popup.js`).
+> Na primeira mensagem (ou em Configurações ▸ Conta ▸ Conectar conta) abre o login
+> real do `aurex-api`.
 
 ---
 
-## 1. Subir o `aurex-api` para o GitHub
+## 1. Deploy no Railway SEM expor o código (recomendado p/ seus segredos)
 
-No diretório do servidor (`C:\Users\User\Desktop\aurex-api`):
+Como o `aurex-api` tem chaves, **não precisa ir para o GitHub**. Use o Railway CLI,
+que sobe o código local direto:
 
 ```bash
-git init
-git add -A
-git commit -m "aurex-api inicial"
-# crie um repositório vazio no GitHub (ex: SEU_USUARIO/aurex-api) e:
-git remote add origin https://github.com/SEU_USUARIO/aurex-api.git
-git branch -M main
-git push -u origin main
+npm i -g @railway/cli
+railway login
+cd C:\Users\User\Desktop\aurex-api
+railway init           # cria o projeto
+railway up             # faz deploy do diretório atual
 ```
 
-> Garanta um `.gitignore` com `node_modules` e `.env` (não suba segredos).
+Os segredos ficam só no painel do Railway (passo 3), nunca no código.
+
+> Se um dia for para o GitHub: use repositório **privado**, `.env` no `.gitignore`,
+> e **rotacione** qualquer chave que já tenha sido commitada (o histórico guarda).
 
 ---
 
 ## 2. Ajustes obrigatórios no servidor para nuvem
 
-A nuvem injeta a porta e exige bind público. No seu `src/server.ts`, troque o
-listen fixo (`127.0.0.1:3030`) por:
+A nuvem injeta a porta e exige bind público. No `src/server.ts`, troque o listen
+fixo (`127.0.0.1:3030`) por:
 
 ```ts
 const port = Number(process.env.PORT) || 3030;
-app.listen(port, "0.0.0.0", () => {
-  console.log(`Aurex API running on port ${port}`);
-});
+app.listen(port, "0.0.0.0", () => console.log(`Aurex API on ${port}`));
 ```
-
-- **`process.env.PORT`** → o Railway define a porta automaticamente.
-- **`0.0.0.0`** → sem isso o serviço fica inacessível de fora.
 
 A resposta de `/chat/completions` deve seguir o formato OpenAI (a extensão lê
 `choices[0].message` e `tool_calls`):
@@ -53,57 +52,65 @@ A resposta de `/chat/completions` deve seguir o formato OpenAI (a extensão lê
 
 ---
 
-## 3. Deploy no Railway
+## 3. Configurar Postgres + segredos no Railway
 
-1. Acesse railway.app → **New Project → Deploy from GitHub repo** → escolha `aurex-api`.
-2. **Add Postgres**: no projeto, **New → Database → PostgreSQL**. O Railway cria a
-   variável `DATABASE_URL` — use-a no servidor (substitua a conexão local).
-3. **Variáveis de ambiente** (aba *Variables* do serviço): adicione a chave do LLM
-   que o servidor usa (ex: `ANTHROPIC_API_KEY` / `OPENAI_API_KEY`) e qualquer outra
-   que o `.env` local tinha. **Não** precisa definir `PORT` (o Railway define).
-4. Confirme o comando de start. Para `tsx`, um destes funciona:
-   - `npm run start` apontando para `tsx src/server.ts`, ou
-   - build TypeScript + `node dist/server.js` (mais robusto em produção).
-5. Em **Settings → Networking → Generate Domain** para obter a URL pública, algo como
+1. No projeto: **New → Database → PostgreSQL** (gera `DATABASE_URL`).
+2. Aba **Variables** do serviço: adicione a chave do LLM (ex: `ANTHROPIC_API_KEY`) e
+   tudo que estava no seu `.env` local. **Não** defina `PORT` (o Railway define).
+3. **Settings → Networking → Generate Domain** → você recebe a URL pública, ex:
    `https://aurex-api-production.up.railway.app`.
-
-### Testar
-```bash
-curl -X POST https://SEU-APP.up.railway.app/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"AurexAI","messages":[{"role":"user","content":"oi"}]}'
-```
-Deve voltar um JSON no formato OpenAI acima.
 
 ---
 
-## 4. Apontar a extensão para o endpoint (1 linha)
+## 4. Login: liberar o redirect da extensão (passo crítico)
 
-Em `popup.js`, no topo do arquivo, troque a constante:
+A extensão faz OAuth via `chrome.identity.launchWebAuthFlow`. O redirect dela é:
+
+```
+https://<ID_DA_EXTENSAO>.chromiumapp.org/callback
+```
+
+Para descobrir o valor exato, no console do side panel rode:
+```js
+chrome.identity.getRedirectURL("callback")
+```
+
+No `aurex-api`, **adicione esse redirect à allowlist** de `redirect_uri` do OAuth
+(senão o servidor recusa o login da extensão). Contrato que a extensão espera:
+
+| Passo | Requisição | Resposta esperada |
+|------|------------|-------------------|
+| 1 | `GET {base}/auth/login?state=&code_challenge=&redirect_uri=` (PKCE **S256**) | redireciona para `redirect_uri?code=&state=` |
+| 2 | `POST {base}/auth/token` `{ code, code_verifier, redirect_uri }` | `{ accessToken, refreshToken, expiresIn, user }` |
+| 3 | `POST {base}/auth/refresh` `{ refreshToken }` | `{ accessToken, refreshToken, expiresIn, user }` |
+| 4 | `POST {base}/auth/logout` `{ refreshToken }` | 200 |
+| 5 | `POST {base}/chat/completions` com `Authorization: Bearer <accessToken>` | formato OpenAI |
+
+> Se os seus endpoints/campos forem diferentes disso, me diga os nomes reais que eu
+> ajusto `loginAurexChrome` / `refreshAurexAccessToken` / `getAurexAccessToken` em
+> `popup.js` para baterem com o seu servidor.
+
+> Dica: para o `<ID_DA_EXTENSAO>` ser **estável**, gere uma `key` no `manifest.json`
+> (ou publique a extensão). Sem isso, o ID muda ao recarregar e o redirect cadastrado
+> deixa de valer.
+
+---
+
+## 5. Apontar a extensão para o endpoint (1 linha)
+
+Em `popup.js`, no topo, troque:
 
 ```js
 var AUREX_PRODUCTION_API_BASE = "https://SEU-APP.up.railway.app";
 ```
 
 - **Sem** `/chat/completions` e **sem** `/v1` no final — a extensão adiciona
-  `/chat/completions` sozinha (seu servidor expõe a rota na raiz).
-- A partir daí, quem instalar a extensão já usa direto, sem mexer em Configurações.
+  `/chat/completions` sozinha; os endpoints `/auth/*` são montados a partir dessa
+  mesma base.
 
-Recarregue a extensão (`chrome://extensions` → recarregar) e **feche/reabra o
-side panel**.
+Recarregue a extensão (`chrome://extensions` → recarregar) e **feche/reabra o side
+panel**.
 
-> A aba **Configurações ▸ Geral ▸ Servidor** continua existindo para casos
-> avançados (testar local, usar uma chave, ou ligar login). Para o usuário final,
-> nada disso é necessário.
-
----
-
-## 5. Próxima etapa (quando quiser): login real
-
-- O endpoint hoje é **aberto** — qualquer um com a extensão consome o LLM (risco de
-  custo/abuso). Para produto público, adicione autenticação:
-  - No `aurex-api`: rotas `/auth/login`, `/auth/token`, `/auth/refresh`, `/auth/logout`
-    e exigir `Authorization: Bearer` em `/chat/completions`.
-  - Na extensão: ligar **Configurações ▸ Servidor ▸ Exigir login (OAuth)** (já
-    implementado: usa `chrome.identity` + PKCE em `loginAurexChrome()`), ou
-    conectar o botão de `login.html` ao fluxo real.
+> Configurações ▸ Geral ▸ Servidor permite sobrescrever a URL, colar uma chave de
+> API, ou desligar o login para testes locais. O usuário final não precisa de nada
+> disso.

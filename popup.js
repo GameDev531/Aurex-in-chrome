@@ -12,6 +12,24 @@ var AUREX_API_BASE_URL = (localStorage.getItem('aurex_api_base_url') || AUREX_PR
 var AUREX_API_URL = AUREX_API_BASE_URL + "/chat/completions";
 var AUREX_AUTH_STORAGE_KEY = "aurex_auth_tokens";
 
+// Produto: por padrão EXIGE login (o aurex-api já tem auth OAuth/PKCE, a mesma
+// que o Aurex CLI usa). O usuário pode desligar em Configurações para testes locais.
+var AUREX_REQUIRE_LOGIN_DEFAULT = true;
+
+// Base usada para os endpoints de autenticação. Lê a URL atual das Configurações
+// (não a constante congelada no load) e remove um eventual /v1 final.
+function getAurexAuthBase() {
+  var base = (localStorage.getItem('aurex_api_base_url') || AUREX_PRODUCTION_API_BASE).replace(/\/+$/, '');
+  return base.replace(/\/v1\/?$/, '');
+}
+
+// Login é exigido? (padrão do produto = sim, salvo se o usuário desligar)
+function isLoginRequired() {
+  var stored = localStorage.getItem('aurex_use_login');
+  if (stored === null) return AUREX_REQUIRE_LOGIN_DEFAULT;
+  return stored === 'true';
+}
+
 function storageGet(key) {
   return new Promise((resolve) => chrome.storage.local.get([key], (result) => resolve(result[key] || null)));
 }
@@ -67,7 +85,7 @@ async function loginAurexChrome() {
   var pkce = await createPkcePair();
   var state = randomBase64Url(24);
   var redirectUri = chrome.identity.getRedirectURL("callback");
-  var loginUrl = new URL(AUREX_API_BASE_URL.replace(/\/v1\/?$/, "") + "/auth/login");
+  var loginUrl = new URL(getAurexAuthBase() + "/auth/login");
   loginUrl.searchParams.set("state", state);
   loginUrl.searchParams.set("code_challenge", pkce.challenge);
   loginUrl.searchParams.set("redirect_uri", redirectUri);
@@ -78,7 +96,7 @@ async function loginAurexChrome() {
   var returnedState = callback.searchParams.get("state");
   if (!code || returnedState !== state) throw new Error("Aurex login state mismatch.");
 
-  var response = await fetch(AUREX_API_BASE_URL.replace(/\/v1\/?$/, "") + "/auth/token", {
+  var response = await fetch(getAurexAuthBase() + "/auth/token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code: code, code_verifier: pkce.verifier, redirect_uri: redirectUri })
@@ -98,7 +116,7 @@ async function loginAurexChrome() {
 
 async function refreshAurexAccessToken(tokens) {
   if (!tokens || !tokens.refreshToken) return null;
-  var response = await fetch(AUREX_API_BASE_URL.replace(/\/v1\/?$/, "") + "/auth/refresh", {
+  var response = await fetch(getAurexAuthBase() + "/auth/refresh", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refreshToken: tokens.refreshToken })
@@ -131,7 +149,7 @@ async function getAurexAccessToken() {
 async function logoutAurexChrome() {
   var tokens = await storageGet(AUREX_AUTH_STORAGE_KEY);
   if (tokens?.refreshToken) {
-    await fetch(AUREX_API_BASE_URL.replace(/\/v1\/?$/, "") + "/auth/logout", {
+    await fetch(getAurexAuthBase() + "/auth/logout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken: tokens.refreshToken })
@@ -823,7 +841,7 @@ function setupEventListeners() {
 
     if (text === '/logout') {
       logoutAurexChrome()
-        .then(() => { openLoginPage(); appendMessageToUI('assistant', 'Logout Aurex concluido.'); })
+        .then(() => { if (typeof renderAccountStatus === 'function') renderAccountStatus(); appendMessageToUI('assistant', t('account.logoutDone')); })
         .catch((error) => appendMessageToUI('assistant', 'Falha no logout Aurex: ' + error.message));
       if (mainInput) mainInput.value = '';
       if (chatInput) chatInput.value = '';
@@ -1501,19 +1519,17 @@ async function processLLMLoop(iterationCount = 0) {
     MotionUI.animateThinking(loadingDiv);
 
     // Monta endpoint e autenticação conforme as Configurações de servidor.
-    // PRODUTO (padrão): aponta para o endpoint público e NÃO exige login — o
-    // usuário instala e já usa. A autenticação só acontece se for configurada:
-    // - "Chave da API" preenchida  -> envia Bearer com essa chave
-    // - "Usar login (OAuth)" ligado -> faz o fluxo de login do Aurex
-    // - caso contrário (padrão)     -> sem Authorization (servidor cuida da chave do LLM)
+    // PRODUTO (padrão): exige login OAuth/PKCE — o mesmo do aurex-api/CLI.
+    // - "Chave da API" preenchida  -> envia Bearer com essa chave (uso avançado)
+    // - login exigido (padrão)     -> obtém/renova o token via getAurexAccessToken()
+    // - login desligado            -> sem Authorization (servidor cuida da chave do LLM)
     var apiBase = (localStorage.getItem('aurex_api_base_url') || AUREX_PRODUCTION_API_BASE).replace(/\/+$/, '');
     var apiUrl = apiBase + '/chat/completions';
     var requestHeaders = { "Content-Type": "application/json" };
     var apiKey = (localStorage.getItem('aurex_api_key') || '').trim();
-    var useLogin = localStorage.getItem('aurex_use_login') === 'true';
     if (apiKey) {
       requestHeaders["Authorization"] = "Bearer " + apiKey;
-    } else if (useLogin) {
+    } else if (isLoginRequired()) {
       let accessToken = await getAurexAccessToken();
       requestHeaders["Authorization"] = "Bearer " + accessToken;
     }
@@ -2108,7 +2124,7 @@ function setupSettingsPanel() {
   var apiKeyInput = document.getElementById('api-key-input');
   var saveServer = document.getElementById('save-server');
   if (serverUrlInput) serverUrlInput.value = localStorage.getItem('aurex_api_base_url') || '';
-  if (loginToggle) loginToggle.checked = localStorage.getItem('aurex_use_login') === 'true';
+  if (loginToggle) loginToggle.checked = isLoginRequired();
   if (apiKeyInput) apiKeyInput.value = localStorage.getItem('aurex_api_key') || '';
   if (saveServer) {
     saveServer.addEventListener('click', function () {
@@ -2149,16 +2165,52 @@ function setupSettingsPanel() {
     }
   } catch (e) { /* ignore */ }
 
-  // Logout
+  // Conta: conectar / sair / status (usa o login real OAuth/PKCE do aurex-api)
+  var loginBtn = document.getElementById('btn-login');
   var logoutBtn = document.getElementById('btn-logout');
-  if (logoutBtn) {
-    logoutBtn.addEventListener('click', function () {
-      logoutAurexChrome().catch(function () {}).then(function () { openLoginPage(); });
+  if (loginBtn) {
+    loginBtn.addEventListener('click', function () {
+      renderAccountStatus(t('account.connecting'));
+      loginAurexChrome()
+        .then(function () { renderAccountStatus(); })
+        .catch(function (err) { renderAccountStatus(t('account.loginFailed') + (err && err.message ? err.message : '')); });
     });
   }
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', function () {
+      logoutAurexChrome().catch(function () {}).then(function () { renderAccountStatus(t('account.logoutDone')); });
+    });
+  }
+  renderAccountStatus();
 
   // Atalhos (shortcuts) personalizados
   setupShortcutsManager();
+}
+
+function toggleAccountButtons(loggedIn) {
+  var loginBtn = document.getElementById('btn-login');
+  var logoutBtn = document.getElementById('btn-logout');
+  if (loginBtn) loginBtn.style.display = loggedIn ? 'none' : 'inline-flex';
+  if (logoutBtn) logoutBtn.style.display = loggedIn ? 'inline-flex' : 'none';
+}
+
+// Mostra o estado da conta (conectado como X / não conectado). Passe um texto
+// transitório (ex: "Abrindo login...") para feedback imediato.
+function renderAccountStatus(transient) {
+  var el = document.getElementById('account-status');
+  if (!el) return;
+  storageGet(AUREX_AUTH_STORAGE_KEY).then(function (tokens) {
+    var loggedIn = !!(tokens && tokens.accessToken);
+    toggleAccountButtons(loggedIn);
+    if (transient) { el.textContent = transient; return; }
+    if (loggedIn) {
+      var who = (tokens.user && (tokens.user.name || tokens.user.email)) || 'Aurex';
+      el.innerHTML = '<i class="fa-solid fa-circle-check account-ok"></i> ' +
+        escapeHtml(t('account.loggedInAs')) + ' <strong>' + escapeHtml(who) + '</strong>';
+    } else {
+      el.textContent = t('account.loggedOut');
+    }
+  });
 }
 
 function renderApprovedSites() {
