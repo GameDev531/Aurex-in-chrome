@@ -1599,6 +1599,10 @@ async function processLLMLoop(iterationCount = 0) {
     }
 
     const data = await response.json();
+    if (!data || !Array.isArray(data.choices) || !data.choices[0] || !data.choices[0].message) {
+      appendMessageToUI('assistant', "❌ Resposta do servidor em formato inesperado.\n\nO Aurex espera o formato OpenAI: { \"choices\": [ { \"message\": { \"role\": \"assistant\", \"content\": \"...\" } } ] }.\n\nRecebido: " + escapeHtml(JSON.stringify(data).slice(0, 500)));
+      return;
+    }
     const responseMsg = data.choices[0].message;
 
     chatHistory.push(responseMsg);
