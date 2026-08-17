@@ -1917,3 +1917,19 @@ input:checked + .slider { background-color: var(--text-accent); }
   flex-direction: column;
   margin-top: 4px;
 }
+
+/* --- Integrações (chaves de API por serviço) --- */
+.integrations-list { display: flex; flex-direction: column; gap: 12px; margin: 12px 0; }
+.integration-item {
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: 12px;
+  background: var(--bg-secondary);
+}
+.integration-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.integration-title { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+.integration-status { font-size: 11px; padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.integration-status.is-on { background: var(--color-background-success); color: var(--color-text-success); }
+.integration-status.is-off { background: var(--bg-tertiary); color: var(--text-secondary); }
+.integration-help { font-size: 11px; color: var(--text-secondary); margin-bottom: 8px; line-height: 1.45; }
+.integration-actions { display: flex; gap: 8px; margin-top: 8px; }

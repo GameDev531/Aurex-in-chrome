@@ -236,8 +236,20 @@ var SYSTEM_PROMPT = "Voc\u00ea \u00e9 o Aurex, um Web Agent inteligente integrad
 "3. Escreva cada arquivo com `write_file`, respeitando a extensao correta e agrupando tudo numa subpasta (ex: clone_exemplo/index.html, clone_exemplo/style.css, clone_exemplo/script.js).\n" +
 "NUNCA entregue codigo apenas como texto no chat quando o usuario pediu um site ou um arquivo: gere os arquivos de verdade com `write_file`.\n" +
 "Ao reproduzir um site, escreva codigo proprio e limpo a partir do que observou; nao copie textos, imagens ou marcas de terceiros para uso publico sem o usuario ter direito sobre eles.\n\n" +
+"# ARQUITETURA DE FERRAMENTAS (ESCOLHA CERTO)\n" +
+"Voce e um agente operador de navegador. Suas ferramentas vem em quatro familias; escolha SEMPRE a mais barata que resolve:\n" +
+"1. BROWSER TOOLS (`dom_action`, `capture_screenshot`, `tab_manager`): agem NA ABA do usuario. Use quando a tarefa exige a sessao dele — estar logado, clicar, preencher formulario, navegar, conferir o que esta na tela.\n" +
+"2. WEB TOOLS (`web_search`, `web_extract`, `http_request`): trazem informacao DE FORA sem abrir aba, sem pedir permissao e sem o usuario ver nada mudar.\n" +
+"   - `web_search`: para saber de algo (fatos, noticias, dados atuais).\n" +
+"   - `web_extract`: para LER uma pagina especifica. Prefira a `http_request` quando o objetivo e ler texto: gasta muito menos contexto.\n" +
+"   - `http_request`: requisicao crua. Use para APIs, JSON, e para baixar CSS/JS ao clonar um site.\n" +
+"3. EXTERNAL TOOLS (`maps_places` e afins): servicos de terceiros. So aparecem para voce quando o usuario configurou a chave dele. Se a ferramenta esta na sua lista, ela FUNCIONA — pode usar.\n" +
+"4. CORE TOOLS (`write_file`, `save_markdown_file`, `task_memory`): entrega de arquivos e memoria da tarefa.\n" +
+"REGRA DE OURO: nao abra o navegador para o que uma Web Tool resolve. Pesquisar um fato e `web_search`, nao abrir o Google e ler a tela. Ler um artigo e `web_extract`, nao navegar + get_accessibility_tree. Use as Browser Tools quando o valor esta em ESTAR na pagina do usuario.\n\n" +
 "# SITES QUE BLOQUEIAM AUTOMACAO E CHAVES DE API\n" +
 "Alguns servicos (Google Maps, buscadores, redes sociais) detectam e bloqueiam automacao. NAO insista em raspar essas paginas e NUNCA invente uma chave de API.\n" +
+"Para MAPAS E LUGARES: se `maps_places` estiver disponivel, use ela (Google Places API New, com a chave do usuario). Se NAO estiver, nao tente abrir o Google Maps: use os provedores gratuitos abaixo.\n" +
+"Se uma ferramenta externa que resolveria a tarefa nao estiver na sua lista, diga ao usuario qual chave falta e onde cadastrar (Configuracoes > Geral > Chaves de API), e entregue o melhor resultado possivel com as alternativas gratuitas.\n" +
 "Prefira APIs publicas gratuitas e SEM CHAVE via `http_request`:\n" +
 "- Enderecos/coordenadas: https://nominatim.openstreetmap.org/search?q=TERMO&format=json&limit=5\n" +
 "- Lugares proximos (restaurantes, farmacias...): Overpass API em https://overpass-api.de/api/interpreter\n" +
@@ -290,7 +302,7 @@ var SYSTEM_PROMPT = "Voc\u00ea \u00e9 o Aurex, um Web Agent inteligente integrad
 "# QUESTIONARIO\n" +
 "Alem do plano, se a tarefa precisar de informacoes extras do usuario (nome do projeto, preferencias, etc), inclua campos de input DENTRO do widget do plano usando q-field/q-label/q-input.";
 
-const TOOLS = [
+const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
@@ -425,8 +437,121 @@ const TOOLS = [
         required: ["command"]
       }
     }
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_extract",
+      description: "Baixa uma URL e devolve o conteudo LEGIVEL dela (titulo, texto limpo sem menu/script/rodape, e os links). Use isto em vez de http_request quando voce quer LER um artigo, documentacao ou noticia: gasta muito menos contexto que o HTML cru. Nao abre aba e nao aparece para o usuario.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "URL completa http:// ou https://" },
+          max_chars: { type: "number", description: "Limite de caracteres do texto extraido. Padrao 15000." }
+        },
+        required: ["url"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description: "Pesquisa na web e devolve uma resposta com as fontes citadas. Use para perguntas sobre fatos atuais, noticias e dados que voce nao tem. E mais rapido que abrir o navegador e ler paginas manualmente.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "A pergunta ou termo de pesquisa, em linguagem natural." }
+        },
+        required: ["query"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "maps_places",
+      description: "Consulta lugares reais no Google Places API (New): restaurantes, lojas, enderecos, avaliacoes e horarios. Comandos: search_text (busca por texto livre, ex: 'pizzaria em Copacabana'), search_nearby (busca por tipo em volta de uma coordenada), details (detalhes completos de um place_id). Prefira esta ferramenta a tentar abrir o Google Maps no navegador, porque o site bloqueia automacao.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string", enum: ["search_text", "search_nearby", "details"] },
+          query: { type: "string", description: "Texto da busca (search_text). Ex: 'farmacia 24h no Centro do Rio'" },
+          latitude: { type: "number", description: "Latitude do centro da busca (search_nearby)" },
+          longitude: { type: "number", description: "Longitude do centro da busca (search_nearby)" },
+          radius: { type: "number", description: "Raio em metros para search_nearby. Padrao 1500, maximo 50000." },
+          included_type: { type: "string", description: "Tipo do lugar para search_nearby, no padrao do Google. Ex: restaurant, pharmacy, gas_station, supermarket." },
+          place_id: { type: "string", description: "Identificador do lugar para o comando details (vem como 'id' nos resultados de busca)." },
+          max_results: { type: "number", description: "Quantidade de resultados. Padrao 10, maximo 20." }
+        },
+        required: ["command"]
+      }
+    }
   }
 ];
+
+// ========== ARQUITETURA DE FERRAMENTAS ==========
+// Browser Tools : agem na aba do usuário (CDP, acessibilidade, abas).
+// Web Tools     : trazem informação de fora sem abrir aba.
+// External Tools: serviços de terceiros; só existem se o usuário configurar a
+//                 chave dele. Nenhuma chave vem embutida no produto.
+// Core Tools    : utilidades locais (arquivos, memória da tarefa).
+const TOOL_GROUPS = {
+  browser: ["dom_action", "capture_screenshot", "tab_manager"],
+  web: ["web_search", "web_extract", "http_request"],
+  external: ["maps_places"],
+  core: ["write_file", "save_markdown_file", "task_memory"]
+};
+
+// Integrações que o usuário pluga com a própria chave. `tools` só entram na
+// lista enviada ao modelo quando `key` estiver configurada — assim o Aurex
+// nunca anuncia uma capacidade que não tem como executar.
+const AUREX_INTEGRATIONS = [
+  {
+    key: "GEMINI_API_KEY",
+    label: "Gemini — pesquisa web",
+    tools: ["web_search"],
+    help: "Crie em aistudio.google.com/apikey",
+    modelSetting: { storageKey: "aurex_search_model", defaultValue: "gemini-2.5-flash" }
+  },
+  {
+    key: "GOOGLE_PLACES_API_KEY",
+    label: "Google Places API (New) — mapas e lugares",
+    tools: ["maps_places"],
+    help: "console.cloud.google.com — ative \"Places API (New)\""
+  }
+];
+
+function getToolDefinition(name) {
+  return TOOL_DEFINITIONS.find(function (tool) {
+    return tool.function && tool.function.name === name;
+  }) || null;
+}
+
+// Nomes de ferramentas bloqueadas por falta de chave, com a integração que as libera.
+function getGatedTools() {
+  var configured = getApiKeyNames();
+  var gated = {};
+  AUREX_INTEGRATIONS.forEach(function (integration) {
+    if (configured.indexOf(integration.key) !== -1) return;
+    integration.tools.forEach(function (toolName) { gated[toolName] = integration; });
+  });
+  return gated;
+}
+
+// Lista final enviada ao modelo, na ordem da arquitetura.
+function getActiveTools() {
+  var gated = getGatedTools();
+  var active = [];
+  ["browser", "web", "external", "core"].forEach(function (group) {
+    TOOL_GROUPS[group].forEach(function (toolName) {
+      if (gated[toolName]) return;
+      var def = getToolDefinition(toolName);
+      if (def) active.push(def);
+    });
+  });
+  return active;
+}
 
 let chatHistory = [
   { role: "system", content: SYSTEM_PROMPT }
@@ -1653,7 +1778,7 @@ async function processLLMLoop(iterationCount = 0) {
       body: JSON.stringify({
         model: "AurexAI",
         messages: requestMessages,
-        tools: TOOLS,
+        tools: getActiveTools(),
         temperature: 0.2
       })
     });
@@ -2091,6 +2216,300 @@ async function executeHttpRequest(args) {
   }
 }
 
+// ===== WEB TOOLS =====
+
+// Converte HTML em texto legível. O parse é feito num documento inerte
+// (DOMParser não executa script nem carrega recursos), então é seguro rodar
+// isso sobre HTML de terceiros.
+function extractReadableText(html, baseUrl, maxChars) {
+  var doc = new DOMParser().parseFromString(html, "text/html");
+
+  doc.querySelectorAll("script, style, noscript, iframe, svg, nav, header, footer, aside, form").forEach(function (el) {
+    el.remove();
+  });
+
+  var container = doc.querySelector("article") || doc.querySelector("main") || doc.body;
+  if (!container) return { title: "", text: "", links: [] };
+
+  // Marca fronteiras de bloco para o texto não virar um parágrafo único.
+  container.querySelectorAll("p, div, section, article, h1, h2, h3, h4, h5, h6, li, tr, br").forEach(function (el) {
+    el.appendChild(doc.createTextNode("\n"));
+  });
+
+  var text = (container.textContent || "")
+    .replace(/[ \t ]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  var truncated = false;
+  var totalChars = text.length;
+  if (text.length > maxChars) {
+    text = text.slice(0, maxChars) + "\n\n[AUREX] TRUNCADO: " + (totalChars - maxChars) + " caracteres restantes.";
+    truncated = true;
+  }
+
+  var links = [];
+  var seen = {};
+  Array.from(container.querySelectorAll("a[href]")).forEach(function (a) {
+    if (links.length >= 50) return;
+    var label = (a.textContent || "").replace(/\s+/g, " ").trim();
+    if (!label) return;
+    var href = a.getAttribute("href");
+    try { href = new URL(href, baseUrl).toString(); } catch (e) { return; }
+    if (seen[href]) return;
+    seen[href] = true;
+    links.push({ text: label.slice(0, 100), href: href });
+  });
+
+  var titleEl = doc.querySelector("title");
+  return {
+    title: titleEl ? titleEl.textContent.trim() : "",
+    text: text,
+    truncated: truncated,
+    totalChars: totalChars,
+    links: links
+  };
+}
+
+async function executeWebExtract(args) {
+  var url = String(args && args.url ? args.url : "").trim();
+  if (!url) return { success: false, error: "Informe a URL." };
+
+  var maxChars = parseInt(args.max_chars, 10);
+  if (!isFinite(maxChars) || maxChars <= 0) maxChars = 15000;
+  maxChars = Math.min(maxChars, 100000);
+
+  var res = await executeHttpRequest({
+    url: url,
+    method: "GET",
+    headers: { "Accept": "text/html,application/xhtml+xml,text/plain" }
+  });
+
+  if (!res.success) return res;
+  if (res.binary) {
+    return { success: false, error: "A URL retornou conteudo binario (" + res.contentType + "), nao da para extrair texto." };
+  }
+
+  var isHtml = /html|xml/i.test(res.contentType || "");
+  if (!isHtml) {
+    var plain = String(res.body || "");
+    var cut = plain.length > maxChars;
+    return {
+      success: true,
+      url: res.url,
+      contentType: res.contentType,
+      text: cut ? plain.slice(0, maxChars) + "\n\n[AUREX] TRUNCADO." : plain,
+      truncated: cut
+    };
+  }
+
+  var extracted = extractReadableText(res.body, url, maxChars);
+  return {
+    success: true,
+    url: res.url,
+    title: extracted.title,
+    text: extracted.text,
+    truncated: extracted.truncated,
+    totalChars: extracted.totalChars,
+    links: extracted.links
+  };
+}
+
+// Pesquisa web via Gemini com grounding do Google Search. A chave é do usuário
+// e é injetada no header pelo substituteApiKeys, nunca pelo modelo.
+async function executeWebSearch(args) {
+  var query = String(args && args.query ? args.query : "").trim();
+  if (!query) return { success: false, error: "Informe a pesquisa em 'query'." };
+
+  var model = (localStorage.getItem("aurex_search_model") || "gemini-2.5-flash").trim() || "gemini-2.5-flash";
+
+  var res = await executeHttpRequest({
+    url: "https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(model) + ":generateContent",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": "{{KEY:GEMINI_API_KEY}}"
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: query }] }],
+      tools: [{ google_search: {} }]
+    })
+  });
+
+  if (!res.success) {
+    return {
+      success: false,
+      error: "Pesquisa falhou (" + (res.status || "sem resposta") + "): " + (res.error || "") +
+             " Verifique a chave GEMINI_API_KEY e o modelo '" + model + "' em Configuracoes > Chaves de API."
+    };
+  }
+
+  var payload;
+  try {
+    payload = JSON.parse(res.body);
+  } catch (e) {
+    return { success: false, error: "Resposta da pesquisa nao veio em JSON valido." };
+  }
+
+  var candidate = payload && payload.candidates && payload.candidates[0];
+  if (!candidate) {
+    var apiErr = payload && payload.error && payload.error.message;
+    return { success: false, error: apiErr ? ("API de pesquisa: " + apiErr) : "A pesquisa nao retornou resultados." };
+  }
+
+  var answer = ((candidate.content && candidate.content.parts) || [])
+    .map(function (part) { return part.text || ""; })
+    .join("")
+    .trim();
+
+  var sources = [];
+  var grounding = candidate.groundingMetadata;
+  if (grounding && Array.isArray(grounding.groundingChunks)) {
+    grounding.groundingChunks.forEach(function (chunk) {
+      if (chunk && chunk.web && chunk.web.uri) {
+        sources.push({ title: chunk.web.title || chunk.web.uri, url: chunk.web.uri });
+      }
+    });
+  }
+
+  return {
+    success: true,
+    query: query,
+    model: model,
+    answer: answer || "(sem texto na resposta)",
+    sources: sources,
+    note: "Cite as fontes ao usar esta resposta. Se precisar de detalhe alem do resumo, abra a fonte com web_extract."
+  };
+}
+
+// ===== EXTERNAL TOOLS =====
+
+var PLACES_LIST_FIELDS = [
+  "places.id", "places.displayName", "places.formattedAddress", "places.rating",
+  "places.userRatingCount", "places.priceLevel", "places.currentOpeningHours.openNow",
+  "places.googleMapsUri", "places.websiteUri", "places.nationalPhoneNumber", "places.location"
+].join(",");
+
+var PLACES_DETAIL_FIELDS = [
+  "id", "displayName", "formattedAddress", "rating", "userRatingCount", "priceLevel",
+  "currentOpeningHours", "googleMapsUri", "websiteUri", "nationalPhoneNumber",
+  "location", "editorialSummary", "reviews"
+].join(",");
+
+function simplifyPlace(place) {
+  if (!place) return null;
+  return {
+    id: place.id,
+    name: place.displayName && place.displayName.text ? place.displayName.text : undefined,
+    address: place.formattedAddress,
+    rating: place.rating,
+    reviews: place.userRatingCount,
+    priceLevel: place.priceLevel,
+    openNow: place.currentOpeningHours ? place.currentOpeningHours.openNow : undefined,
+    phone: place.nationalPhoneNumber,
+    website: place.websiteUri,
+    mapsUrl: place.googleMapsUri,
+    location: place.location
+  };
+}
+
+// Google Places API (New). Requer a chave do próprio usuário; sem ela a tool
+// nem chega a ser oferecida ao modelo (ver getActiveTools).
+async function executeMapsPlaces(args) {
+  var command = String(args && args.command ? args.command : "").trim();
+  var maxResults = parseInt(args.max_results, 10);
+  if (!isFinite(maxResults) || maxResults <= 0) maxResults = 10;
+  maxResults = Math.min(maxResults, 20);
+
+  var request;
+
+  if (command === "search_text") {
+    var query = String(args.query || "").trim();
+    if (!query) return { success: false, error: "search_text exige 'query'. Ex: 'pizzaria em Copacabana'." };
+    request = {
+      url: "https://places.googleapis.com/v1/places:searchText",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": "{{KEY:GOOGLE_PLACES_API_KEY}}",
+        "X-Goog-FieldMask": PLACES_LIST_FIELDS
+      },
+      body: JSON.stringify({ textQuery: query, maxResultCount: maxResults, languageCode: "pt-BR" })
+    };
+  } else if (command === "search_nearby") {
+    var lat = Number(args.latitude);
+    var lng = Number(args.longitude);
+    if (!isFinite(lat) || !isFinite(lng)) {
+      return { success: false, error: "search_nearby exige 'latitude' e 'longitude' numericas. Descubra as coordenadas primeiro (search_text ou Nominatim)." };
+    }
+    var radius = Number(args.radius);
+    if (!isFinite(radius) || radius <= 0) radius = 1500;
+    radius = Math.min(radius, 50000);
+
+    var body = {
+      maxResultCount: maxResults,
+      languageCode: "pt-BR",
+      locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius: radius } }
+    };
+    if (args.included_type) body.includedTypes = [String(args.included_type)];
+
+    request = {
+      url: "https://places.googleapis.com/v1/places:searchNearby",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": "{{KEY:GOOGLE_PLACES_API_KEY}}",
+        "X-Goog-FieldMask": PLACES_LIST_FIELDS
+      },
+      body: JSON.stringify(body)
+    };
+  } else if (command === "details") {
+    var placeId = String(args.place_id || "").trim();
+    if (!placeId) return { success: false, error: "details exige 'place_id' (campo 'id' de um resultado de busca)." };
+    request = {
+      url: "https://places.googleapis.com/v1/places/" + encodeURIComponent(placeId),
+      method: "GET",
+      headers: {
+        "X-Goog-Api-Key": "{{KEY:GOOGLE_PLACES_API_KEY}}",
+        "X-Goog-FieldMask": PLACES_DETAIL_FIELDS
+      }
+    };
+  } else {
+    return { success: false, error: "Comando invalido. Use search_text, search_nearby ou details." };
+  }
+
+  var res = await executeHttpRequest(request);
+
+  var payload = null;
+  if (typeof res.body === "string" && res.body) {
+    try { payload = JSON.parse(res.body); } catch (e) { payload = null; }
+  }
+
+  if (!res.success) {
+    var apiMessage = payload && payload.error && payload.error.message ? payload.error.message : (res.error || "erro desconhecido");
+    return {
+      success: false,
+      error: "Google Places (" + (res.status || "sem resposta") + "): " + apiMessage +
+             " Confira se a chave GOOGLE_PLACES_API_KEY e valida e se a \"Places API (New)\" esta ativada no projeto."
+    };
+  }
+  if (!payload) return { success: false, error: "Resposta do Google Places nao veio em JSON valido." };
+
+  if (command === "details") {
+    return { success: true, command: command, place: simplifyPlace(payload) };
+  }
+
+  var places = Array.isArray(payload.places) ? payload.places.map(simplifyPlace) : [];
+  return {
+    success: true,
+    command: command,
+    count: places.length,
+    places: places,
+    note: places.length ? undefined : "Nenhum lugar encontrado. Tente outro termo ou aumente o raio."
+  };
+}
+
 function sendDebuggerAction(args) {
   return new Promise(function (resolve) {
     chrome.runtime.sendMessage({ action: "debugger_action", payload: args }, function (response) {
@@ -2300,6 +2719,12 @@ function executeToolInBrowser(name, args) {
       });
     } else if (name === "http_request") {
       executeHttpRequest(args).then(resolve);
+    } else if (name === "web_extract") {
+      executeWebExtract(args).then(resolve);
+    } else if (name === "web_search") {
+      executeWebSearch(args).then(resolve);
+    } else if (name === "maps_places") {
+      executeMapsPlaces(args).then(resolve);
     } else if (name === "tab_manager") {
       if (args.command === "create_tab") {
         chrome.tabs.create({ url: args.url, active: true }, function(tab) {
@@ -2436,6 +2861,7 @@ function setupSettingsPanel() {
     openBtn.addEventListener('click', function () {
       panel.classList.remove('hidden');
       renderApprovedSites();
+      renderIntegrations();
       renderApiKeys();
       renderShortcutsList();
       var sidebar = document.getElementById('sidebar');
@@ -2473,6 +2899,7 @@ function setupSettingsPanel() {
       var modeLabel = document.getElementById('mode-current-label');
       if (modeLabel) modeLabel.textContent = t('mode.' + getAurexMode());
       renderApprovedSites();
+      renderIntegrations();
       renderApiKeys();
       renderShortcutsList();
       setDynamicGreeting();
@@ -2636,6 +3063,111 @@ function saveStoredApiKeys(keys) {
   localStorage.setItem('aurex_api_keys', JSON.stringify(keys));
 }
 
+// Integrações conhecidas: cada uma vira um bloco com campo de chave, estado e
+// (quando houver) o modelo usado. Nenhuma chave acompanha o produto — o que
+// não estiver configurado aqui simplesmente não é oferecido ao modelo.
+function renderIntegrations() {
+  var container = document.getElementById('integrations-list');
+  if (!container) return;
+
+  var keys = getStoredApiKeys();
+  container.innerHTML = '';
+
+  AUREX_INTEGRATIONS.forEach(function (integration) {
+    var configured = String(keys[integration.key] || '').trim() !== '';
+
+    var block = document.createElement('div');
+    block.className = 'integration-item';
+
+    var head = document.createElement('div');
+    head.className = 'integration-head';
+
+    var title = document.createElement('span');
+    title.className = 'integration-title';
+    title.textContent = integration.label;
+
+    var status = document.createElement('span');
+    status.className = 'integration-status ' + (configured ? 'is-on' : 'is-off');
+    status.textContent = configured
+      ? t('settings.integrations.on') + ' • ' + maskApiKey(keys[integration.key])
+      : t('settings.integrations.off');
+
+    head.appendChild(title);
+    head.appendChild(status);
+    block.appendChild(head);
+
+    var help = document.createElement('div');
+    help.className = 'integration-help';
+    help.textContent = integration.help + ' — ' + t('settings.integrations.unlocks') + ': ' + integration.tools.join(', ');
+    block.appendChild(help);
+
+    var input = document.createElement('input');
+    input.type = 'password';
+    input.className = 'setting-select';
+    input.placeholder = configured ? t('settings.integrations.replacePh') : t('settings.apikeys.valuePh');
+    block.appendChild(input);
+
+    // Campo opcional de modelo (ex: qual modelo Gemini faz a pesquisa)
+    var modelInput = null;
+    if (integration.modelSetting) {
+      modelInput = document.createElement('input');
+      modelInput.type = 'text';
+      modelInput.className = 'setting-select';
+      modelInput.style.marginTop = '6px';
+      modelInput.placeholder = t('settings.integrations.modelPh');
+      modelInput.value = localStorage.getItem(integration.modelSetting.storageKey) || integration.modelSetting.defaultValue;
+      block.appendChild(modelInput);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'integration-actions';
+
+    var saveBtn = document.createElement('button');
+    saveBtn.className = 'action-btn primary';
+    saveBtn.textContent = t('common.save');
+    saveBtn.addEventListener('click', function () {
+      var current = getStoredApiKeys();
+      var typed = input.value.trim();
+
+      if (modelInput) {
+        var modelValue = modelInput.value.trim() || integration.modelSetting.defaultValue;
+        localStorage.setItem(integration.modelSetting.storageKey, modelValue);
+      }
+
+      // Campo vazio com chave já salva = o usuário só mudou o modelo.
+      if (!typed && !String(current[integration.key] || '').trim()) {
+        saveBtn.textContent = t('settings.apikeys.emptyValue');
+        setTimeout(function () { renderIntegrations(); }, 1600);
+        return;
+      }
+      if (typed) current[integration.key] = typed;
+
+      saveStoredApiKeys(current);
+      renderIntegrations();
+      renderApiKeys();
+    });
+
+    actions.appendChild(saveBtn);
+
+    if (configured) {
+      var removeBtn = document.createElement('button');
+      removeBtn.className = 'action-btn danger';
+      removeBtn.textContent = t('settings.apikeys.remove');
+      removeBtn.addEventListener('click', function () {
+        var current = getStoredApiKeys();
+        delete current[integration.key];
+        saveStoredApiKeys(current);
+        renderIntegrations();
+        renderApiKeys();
+      });
+      actions.appendChild(removeBtn);
+    }
+
+    block.appendChild(actions);
+    container.appendChild(block);
+  });
+}
+
 function renderApiKeys() {
   var list = document.getElementById('api-keys-list');
   if (!list) return;
@@ -2707,6 +3239,7 @@ function setupApiKeysUI() {
     setTimeout(function () { renderAddKeyButtonLabel(addBtn); }, 1200);
   });
 
+  renderIntegrations();
   renderApiKeys();
 }
 
