@@ -223,6 +223,28 @@ var SYSTEM_PROMPT = "Voc\u00ea \u00e9 o Aurex, um Web Agent inteligente integrad
 "1. Use dom_action com command='navigate' com value='https://url' para navegar para uma URL.\n" +
 "2. SPAs (Single Page Apps como WhatsApp, Gmail) demoram a carregar a interface apos a navegacao. SEMPRE use command='wait' com value='5000' (5s) logo apos navegar para um SPA antes de ler a arvore.\n\n" +
 "COMANDO press_key: Use command='press_key' com key='Enter' (ou Tab, Escape, ArrowDown, ArrowUp, Backspace, Space) para pressionar uma tecla avulsa. Util para confirmar dialogs, navegar menus dropdown, ou submeter formularios.\n\n" +
+"# PERMISSAO DE SITE: NUNCA DESISTA DA TAREFA\n" +
+"Quando um site ainda nao foi aprovado, o sistema mostra sozinho um pedido de permissao ao usuario e SEGURA a sua ferramenta ate ele decidir. Isso NAO e um erro e NAO e uma falha sua.\n" +
+"1. NAO diga 'nao consegui', 'nao tenho acesso' nem encerre a tarefa por causa disso. A ferramenta simplesmente demora a responder.\n" +
+"2. Quando o usuario aprovar, a acao e repetida automaticamente e voce recebe o resultado normal. Continue a tarefa exatamente de onde parou.\n" +
+"3. Voce so deve parar se o resultado vier com 'PERMISSAO_NEGADA'. Ai sim explique que o site foi bloqueado pelo usuario e pergunte como prosseguir.\n" +
+"4. Nunca peca ao usuario para 'conceder permissao nas configuracoes': o botao de aprovar ja aparece sozinho na conversa.\n\n" +
+"# ESCREVER CODIGO E CLONAR SITES\n" +
+"Voce CONSEGUE programar e reproduzir sites. O caminho e:\n" +
+"1. `dom_action` com command='get_page_source' e value='html' para pegar o HTML real (vem junto a lista de assets: css, js e imagens).\n" +
+"2. value='css' e value='scripts' para os estilos e scripts da pagina. O que for de outra origem vem como URL: baixe com `http_request`.\n" +
+"3. Escreva cada arquivo com `write_file`, respeitando a extensao correta e agrupando tudo numa subpasta (ex: clone_exemplo/index.html, clone_exemplo/style.css, clone_exemplo/script.js).\n" +
+"NUNCA entregue codigo apenas como texto no chat quando o usuario pediu um site ou um arquivo: gere os arquivos de verdade com `write_file`.\n" +
+"Ao reproduzir um site, escreva codigo proprio e limpo a partir do que observou; nao copie textos, imagens ou marcas de terceiros para uso publico sem o usuario ter direito sobre eles.\n\n" +
+"# SITES QUE BLOQUEIAM AUTOMACAO E CHAVES DE API\n" +
+"Alguns servicos (Google Maps, buscadores, redes sociais) detectam e bloqueiam automacao. NAO insista em raspar essas paginas e NUNCA invente uma chave de API.\n" +
+"Prefira APIs publicas gratuitas e SEM CHAVE via `http_request`:\n" +
+"- Enderecos/coordenadas: https://nominatim.openstreetmap.org/search?q=TERMO&format=json&limit=5\n" +
+"- Lugares proximos (restaurantes, farmacias...): Overpass API em https://overpass-api.de/api/interpreter\n" +
+"- Rotas e distancias: https://router.project-osrm.org/route/v1/driving/LON1,LAT1;LON2,LAT2?overview=false\n" +
+"- Clima: https://api.open-meteo.com/v1/forecast?latitude=..&longitude=..&current_weather=true\n" +
+"- Enciclopedia: https://pt.wikipedia.org/api/rest_v1/page/summary/TITULO\n" +
+"Se a tarefa exigir mesmo um servico pago (ex: Google Places), explique ao usuario que e preciso a chave dele e diga onde colar: Configuracoes > Geral > Chaves de API.\n\n" +
 "REGRA DE SEGURAN\u00c7A CR\u00cdTICA: NUNCA clique em 'Comprar', 'Checkout', 'Pagar' ou submeta formul\u00e1rios financeiros sem autoriza\u00e7\u00e3o expl\u00edcita do usu\u00e1rio.\n" +
 "Use tom direto, evite excesso de emojis e nunca aja como um chatbot gen\u00e9rico.\n\n" +
 "# WIDGET SYSTEM (VISUAL EXCELLENCE)\n" +
@@ -273,13 +295,13 @@ const TOOLS = [
     type: "function",
     function: {
       name: "dom_action",
-      description: "Interage com a página web ativa. Comandos suportados: get_accessibility_tree (retorna nós semânticos limpos da tela, USE ESTE PRIMEIRO!), simulate_click (clica usando backendDOMNodeId do elemento na árvore), simulate_type (digita usando backendDOMNodeId — use submit=true para pressionar Enter automaticamente apos digitar, ESSENCIAL em campos de pesquisa), press_key (pressiona uma tecla: Enter, Tab, Escape, ArrowDown, ArrowUp, Backspace, Space), read_dom (apenas se a árvore falhar), scroll (rola página), navigate (navega para URL), search_web (pesquisa no google), wait (espera X milissegundos para SPAs carregarem).",
+      description: "Interage com a página web ativa. Comandos suportados: get_accessibility_tree (retorna nós semânticos limpos da tela, USE ESTE PRIMEIRO!), simulate_click (clica usando backendDOMNodeId do elemento na árvore), simulate_type (digita usando backendDOMNodeId — use submit=true para pressionar Enter automaticamente apos digitar, ESSENCIAL em campos de pesquisa), press_key (pressiona uma tecla: Enter, Tab, Escape, ArrowDown, ArrowUp, Backspace, Space), get_page_source (CODIGO-FONTE real da pagina: use value='html' para o HTML completo + lista de assets, value='css' para as folhas de estilo, value='scripts' para os scripts; ESSENCIAL para clonar ou estudar um site), read_dom (apenas se a árvore falhar), scroll (rola página), navigate (navega para URL), search_web (pesquisa no google), wait (espera X milissegundos para SPAs carregarem).",
       parameters: {
         type: "object",
         properties: {
           command: {
             type: "string",
-            enum: ["get_accessibility_tree", "simulate_click", "simulate_type", "press_key", "read_dom", "scroll", "navigate", "search_web", "wait"],
+            enum: ["get_accessibility_tree", "simulate_click", "simulate_type", "press_key", "get_page_source", "read_dom", "scroll", "navigate", "search_web", "wait"],
             description: "O comando a executar"
           },
           id: {
@@ -288,7 +310,7 @@ const TOOLS = [
           },
           value: {
             type: "string",
-            description: "Valor para type (texto), scroll (pixels), navigate (URL destino), search_web (termo), ou wait (ms)"
+            description: "Valor para type (texto), scroll (pixels), navigate (URL destino), search_web (termo), wait (ms), ou get_page_source ('html' | 'css' | 'scripts')"
           },
           submit: {
             type: "boolean",
@@ -332,6 +354,44 @@ const TOOLS = [
           }
         },
         required: ["filename", "content"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "write_file",
+      description: "Salva um arquivo de TEXTO de qualquer tipo (html, css, js, json, ts, py, svg, csv, txt, md...) na pasta Downloads, respeitando a extensao que voce escolher. Use esta ferramenta para ENTREGAR CODIGO. Para clonar um site, chame uma vez por arquivo e coloque todos na mesma subpasta (ex: clone_exemplo/index.html, clone_exemplo/style.css, clone_exemplo/script.js).",
+      parameters: {
+        type: "object",
+        properties: {
+          filename: {
+            type: "string",
+            description: "Nome do arquivo COM extensao. Pode incluir uma subpasta relativa. Ex: 'index.html' ou 'clone_exemplo/style.css'. Nao use caminhos absolutos nem '..'."
+          },
+          content: {
+            type: "string",
+            description: "Conteudo completo do arquivo, ja pronto para uso."
+          }
+        },
+        required: ["filename", "content"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "http_request",
+      description: "Faz uma requisicao HTTP direta (sem abrir aba e sem CORS). Use para: baixar CSS/JS/HTML de um site que voce esta clonando; e para consultar APIs publicas GRATUITAS E SEM CHAVE em vez de raspar sites que bloqueiam automacao (Google Maps, etc). APIs sem chave recomendadas: Nominatim (nominatim.openstreetmap.org/search?q=...&format=json) para enderecos/coordenadas; Overpass (overpass-api.de/api/interpreter) para lugares proximos; Open-Meteo (api.open-meteo.com) para clima; Wikipedia REST API para enciclopedia. NUNCA invente uma chave de API.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "URL completa http:// ou https://" },
+          method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"], description: "Metodo HTTP. Padrao GET." },
+          headers: { type: "object", description: "Cabecalhos extras, como { \"Accept\": \"application/json\" }" },
+          body: { type: "string", description: "Corpo da requisicao, ja serializado (ex: JSON como string). Apenas para POST/PUT/PATCH." }
+        },
+        required: ["url"]
       }
     }
   },
@@ -422,6 +482,7 @@ document.addEventListener('DOMContentLoaded', () => {
   setupSkillsPanel();
   setupModeSelector();
   setupSettingsPanel();
+  setupApiKeysUI();
   setupTeachPanel();
   setupTabSpeech();
   setupMotion();
@@ -793,6 +854,10 @@ function setupEventListeners() {
   // New Chat
   const newChatBtn = document.getElementById('new-chat-btn');
   if (newChatBtn) newChatBtn.addEventListener('click', () => {
+    // Se a conversa anterior estava parada esperando uma permissão, o widget
+    // some com o histórico. Encerramos a espera para não deixar a execução
+    // antiga pendurada para sempre.
+    cancelAllPermissionWaits();
     currentChatId = Date.now().toString();
     chatHistory = [{ role: "system", content: SYSTEM_PROMPT }];
     let newTask = localStorage.getItem("aurex_active_task");
@@ -1543,6 +1608,16 @@ async function processLLMLoop(iterationCount = 0) {
       // Modo de operação (Plano / Normal / Autônomo)
       extraDirectives += getModeDirective();
 
+      // Chaves de API do usuário: enviamos apenas os NOMES. O valor fica no
+      // navegador e só é injetado na hora do fetch (ver substituteApiKeys).
+      var apiKeyNames = getApiKeyNames();
+      if (apiKeyNames.length) {
+        extraDirectives += "\n\n# CHAVES DE API DISPONIVEIS\n" +
+          "O usuario cadastrou estas chaves: " + apiKeyNames.join(", ") + ".\n" +
+          "Para usar uma delas em `http_request`, escreva o placeholder {{KEY:NOME}} na URL, nos headers ou no body (ex: {{KEY:" + apiKeyNames[0] + "}}).\n" +
+          "O sistema troca pelo valor real na hora do envio. Voce NUNCA ve o valor da chave e NUNCA deve pedir que o usuario digite a chave no chat.";
+      }
+
       // Idioma escolhido pelo usuário (muda a cada requisição se trocado)
       if (typeof getLanguageDirective === "function") {
         extraDirectives += getLanguageDirective();
@@ -1800,6 +1875,45 @@ function sanitizeMarkdownFilename(filename) {
   return value;
 }
 
+// Sanitiza um nome de arquivo arbitrário PRESERVANDO a extensão escolhida pelo
+// modelo (ao contrário de sanitizeMarkdownFilename, que força a extensão das
+// Configurações). Aceita subpastas relativas e bloqueia travessia de diretório.
+function sanitizeAnyFilename(filename) {
+  var raw = String(filename == null ? "" : filename).replace(/\\/g, "/").trim();
+  raw = raw.replace(/^[a-zA-Z]:\//, "").replace(/^\/+/, "");
+
+  var parts = raw.split("/").filter(function (part) {
+    return part && part !== "." && part !== "..";
+  });
+
+  var cleaned = parts.map(function (part) {
+    return part.replace(/[<>:"|?*\x00-\x1F]/g, "_").replace(/^\.+/, "").trim();
+  }).filter(Boolean);
+
+  if (!cleaned.length) return null;
+
+  var last = cleaned[cleaned.length - 1];
+  if (!/\.[A-Za-z0-9]{1,8}$/.test(last)) last += ".txt";
+  cleaned[cleaned.length - 1] = last;
+
+  return cleaned.join("/");
+}
+
+function mimeForFilename(filename) {
+  var ext = String(filename).split(".").pop().toLowerCase();
+  var map = {
+    html: "text/html", htm: "text/html",
+    css: "text/css",
+    js: "text/javascript", mjs: "text/javascript", jsx: "text/javascript",
+    json: "application/json",
+    md: "text/markdown", txt: "text/plain",
+    csv: "text/csv", tsv: "text/tab-separated-values",
+    svg: "image/svg+xml", xml: "application/xml",
+    yml: "text/plain", yaml: "text/plain"
+  };
+  return (map[ext] || "text/plain") + ";charset=utf-8";
+}
+
 function fileMimeForExt() {
   var ext = (localStorage.getItem('aurex_file_ext') || 'md').toLowerCase();
   var map = {
@@ -1812,6 +1926,285 @@ function fileMimeForExt() {
   return map[ext] || "text/plain;charset=utf-8";
 }
 
+// Requisição HTTP direta a partir do painel. A extensão tem host_permissions
+// para http/https, então não há bloqueio de CORS — é o caminho para consultar
+// APIs públicas sem chave em vez de raspar sites que barram automação.
+var HTTP_REQUEST_TIMEOUT_MS = 30000;
+var HTTP_MAX_CHARS = 120000;
+
+// Chaves de API do usuário: ficam apenas no navegador dele. O modelo conhece
+// somente os NOMES e escreve {{KEY:NOME}}; a troca pelo valor real acontece
+// aqui, na hora do fetch, para a chave nunca entrar no contexto do LLM.
+function getStoredApiKeys() {
+  try {
+    var raw = localStorage.getItem('aurex_api_keys');
+    var parsed = raw ? JSON.parse(raw) : {};
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function getApiKeyNames() {
+  var keys = getStoredApiKeys();
+  return Object.keys(keys).filter(function (name) {
+    return String(keys[name] || '').trim() !== '';
+  });
+}
+
+var API_KEY_PLACEHOLDER = /\{\{\s*KEY\s*:\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
+
+// Retorna { text, missing: [nomes] }. Nunca lança, para o chamador poder
+// avisar o modelo qual chave falta em vez de disparar a requisição sem ela.
+function substituteApiKeys(text) {
+  if (typeof text !== 'string' || text.indexOf('{{') === -1) return { text: text, missing: [] };
+  var keys = getStoredApiKeys();
+  var missing = [];
+  var out = text.replace(API_KEY_PLACEHOLDER, function (match, name) {
+    var value = keys[name];
+    if (typeof value !== 'string' || !value.trim()) {
+      if (missing.indexOf(name) === -1) missing.push(name);
+      return match;
+    }
+    return value.trim();
+  });
+  return { text: out, missing: missing };
+}
+
+async function executeHttpRequest(args) {
+  var rawUrl = String(args && args.url ? args.url : "").trim();
+  if (!rawUrl) return { success: false, error: "Informe a URL." };
+
+  // A URL original (com o placeholder) é a que voltará para o modelo.
+  var displayUrl = rawUrl;
+  var urlSub = substituteApiKeys(rawUrl);
+  if (urlSub.missing.length) {
+    return {
+      success: false,
+      error: "Chave de API nao configurada: " + urlSub.missing.join(", ") +
+             ". Peca ao usuario para cadastrar em Configuracoes > Geral > Chaves de API, ou use uma alternativa gratuita sem chave."
+    };
+  }
+  rawUrl = urlSub.text;
+
+  var parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch (e) {
+    return { success: false, error: "URL invalida: " + rawUrl };
+  }
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    return { success: false, error: "Somente http:// e https:// sao permitidos (recebido: " + parsedUrl.protocol + ")." };
+  }
+
+  var method = String(args.method || "GET").toUpperCase();
+  var allowedMethods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+  if (allowedMethods.indexOf(method) === -1) {
+    return { success: false, error: "Metodo HTTP nao suportado: " + method };
+  }
+
+  var headers = {};
+  var missingKeys = [];
+  if (args.headers && typeof args.headers === "object") {
+    Object.keys(args.headers).forEach(function (key) {
+      var val = args.headers[key];
+      if (typeof val !== "string" && typeof val !== "number") return;
+      var sub = substituteApiKeys(String(val));
+      missingKeys = missingKeys.concat(sub.missing);
+      headers[key] = sub.text;
+    });
+  }
+
+  var requestBody = typeof args.body === "string" ? args.body : undefined;
+  if (requestBody !== undefined) {
+    var bodySub = substituteApiKeys(requestBody);
+    missingKeys = missingKeys.concat(bodySub.missing);
+    requestBody = bodySub.text;
+  }
+
+  if (missingKeys.length) {
+    return {
+      success: false,
+      error: "Chave de API nao configurada: " + missingKeys.join(", ") +
+             ". Peca ao usuario para cadastrar em Configuracoes > Geral > Chaves de API, ou use uma alternativa gratuita sem chave."
+    };
+  }
+
+  var controller = new AbortController();
+  var timeoutId = setTimeout(function () { controller.abort(); }, HTTP_REQUEST_TIMEOUT_MS);
+
+  try {
+    var init = { method: method, headers: headers, signal: controller.signal, redirect: "follow" };
+    if (method !== "GET" && method !== "DELETE" && requestBody !== undefined) {
+      init.body = requestBody;
+    }
+
+    var res = await fetch(parsedUrl.toString(), init);
+    var contentType = res.headers.get("content-type") || "";
+
+    // Conteúdo binário não vira texto útil para o modelo — reportamos em vez
+    // de despejar bytes corrompidos no contexto.
+    var isTextual = /^(text\/|application\/(json|xml|javascript|xhtml|rss|atom|x-www-form-urlencoded)|image\/svg)/i.test(contentType) || contentType === "";
+    if (!isTextual) {
+      var blob = await res.blob();
+      clearTimeout(timeoutId);
+      return {
+        success: res.ok,
+        status: res.status,
+        url: displayUrl,
+        contentType: contentType,
+        binary: true,
+        sizeBytes: blob.size,
+        message: "Conteudo binario (" + contentType + ", " + blob.size + " bytes) nao foi convertido em texto."
+      };
+    }
+
+    var text = await res.text();
+    clearTimeout(timeoutId);
+
+    var truncated = false;
+    var totalChars = text.length;
+    if (text.length > HTTP_MAX_CHARS) {
+      text = text.slice(0, HTTP_MAX_CHARS) + "\n\n/* [AUREX] TRUNCADO: " + (totalChars - HTTP_MAX_CHARS) + " caracteres restantes */";
+      truncated = true;
+    }
+
+    return {
+      // Status de erro não é falha da ferramenta: o modelo precisa ver o código
+      // e o corpo para decidir o que fazer.
+      success: res.ok,
+      status: res.status,
+      statusText: res.statusText,
+      url: displayUrl,
+      contentType: contentType,
+      truncated: truncated,
+      totalChars: totalChars,
+      body: text,
+      error: res.ok ? undefined : "HTTP " + res.status + " " + res.statusText
+    };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err && err.name === "AbortError") {
+      return { success: false, error: "Tempo esgotado (" + (HTTP_REQUEST_TIMEOUT_MS / 1000) + "s) ao acessar " + parsedUrl.hostname + "." };
+    }
+    return { success: false, error: "Falha de rede ao acessar " + parsedUrl.hostname + ": " + (err && err.message ? err.message : String(err)) };
+  }
+}
+
+function sendDebuggerAction(args) {
+  return new Promise(function (resolve) {
+    chrome.runtime.sendMessage({ action: "debugger_action", payload: args }, function (response) {
+      if (chrome.runtime.lastError) {
+        resolve({ success: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      if (!response) {
+        resolve({ success: false, error: "O serviço de automação não respondeu. Tente a ação novamente." });
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+// Executa uma ação no navegador. Se o site ainda não foi aprovado, exibe o
+// widget e AGUARDA a decisão do usuário — a tarefa continua viva o tempo que
+// for preciso — e então repete a ação automaticamente.
+async function runDebuggerActionAwaitingPermission(args) {
+  var response = await sendDebuggerAction(args);
+
+  // Só uma rodada de espera: se depois de aprovar ainda vier "pendente",
+  // devolvemos o erro em vez de entrar em loop de pedidos.
+  if (!response || !response.pending_permission) return response;
+
+  var granted = await waitForUserPermission(response.origin, response.token);
+  if (!granted) {
+    return {
+      success: false,
+      error: "PERMISSAO_NEGADA: o usuario bloqueou o acesso a " + response.origin +
+             ". Nao tente de novo neste site; explique ao usuario e pergunte como prosseguir."
+    };
+  }
+
+  var retry = await sendDebuggerAction(args);
+  if (retry && retry.pending_permission) {
+    return { success: false, error: "A permissao para " + response.origin + " nao foi registrada. Peca ao usuario para aprovar novamente." };
+  }
+  return retry;
+}
+
+// Pergunta ao background se o site da aba ativa já foi aprovado. Se não, abre
+// o pedido e espera a decisão do usuário — mesma regra das ações do Debugger.
+async function ensureSitePermission() {
+  var res = await new Promise(function (resolve) {
+    chrome.runtime.sendMessage({ type: "request_site_permission" }, function (response) {
+      if (chrome.runtime.lastError) {
+        resolve({ success: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(response);
+    });
+  });
+
+  if (!res || !res.success) {
+    return { ok: false, error: (res && res.error) || "Nao foi possivel verificar a permissao do site." };
+  }
+  if (res.allowed) return { ok: true };
+
+  var granted = await waitForUserPermission(res.origin, res.token);
+  if (!granted) {
+    return {
+      ok: false,
+      error: "PERMISSAO_NEGADA: o usuario bloqueou o acesso a " + res.origin +
+             ". Nao tente de novo neste site; explique ao usuario e pergunte como prosseguir."
+    };
+  }
+  return { ok: true };
+}
+
+// Caminho legado via content script (read_dom, scroll, navigate, search_web...).
+function runContentScriptCommand(args) {
+  return new Promise(function (resolve) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs[0]) {
+        resolve({ success: false, error: "No active tab" });
+        return;
+      }
+      chrome.tabs.sendMessage(tabs[0].id, { action: "dom_action", payload: args }, (response) => {
+        if (chrome.runtime.lastError) {
+          const errMsg = chrome.runtime.lastError.message;
+          if (errMsg.includes("Receiving end does not exist")) {
+             resolve({ success: false, error: "A aba atual está bloqueada ou precisa ser atualizada. Por favor, peça ao usuário para ABRIR UMA NOVA ABA e navegar para um site (ex: google.com) antes de pesquisar ou interagir." });
+          } else {
+             resolve({ success: false, error: errMsg });
+          }
+          return;
+        }
+        if (!response) {
+          resolve({ success: false, error: "A página não respondeu ao comando. Recarregue a aba e tente novamente." });
+          return;
+        }
+        if (args.command === "get_page_source") {
+          // O content script já corta o código-fonte no seu próprio limite e
+          // sinaliza `truncated`. Aplicar a poda genérica aqui destruiria o
+          // HTML/CSS que o modelo precisa para reproduzir o site.
+          resolve(response);
+          return;
+        }
+        // Truncar resultados muito grandes para não estourar o contexto do LLM
+        let resultStr = JSON.stringify(response);
+        if (resultStr.length > 20000) {
+          response.data = {
+             warning: "O DOM era muito grande e foi truncado.",
+             content: resultStr.substring(0, 20000) + "... [TRUNCADO]"
+          };
+        }
+        resolve(response);
+      });
+    });
+  });
+}
+
 function executeToolInBrowser(name, args) {
   return new Promise((resolve) => {
     if (name === "dom_action") {
@@ -1822,45 +2215,27 @@ function executeToolInBrowser(name, args) {
         return;
       }
 
-      // Comandos que usam a nova API Debugger
-      if (["get_accessibility_tree", "simulate_click", "simulate_type", "press_key"].includes(args.command)) {
-        chrome.runtime.sendMessage({ action: "debugger_action", payload: args }, (response) => {
-          if (chrome.runtime.lastError) {
-             resolve({ success: false, error: chrome.runtime.lastError.message });
-          } else {
-             resolve(response);
+      // Ler o código-fonte completo é uma leitura sensível: passa pelo mesmo
+      // controle de permissão das ações do Debugger antes de chegar à página.
+      if (args.command === "get_page_source") {
+        ensureSitePermission().then(function (perm) {
+          if (!perm.ok) {
+            resolve({ success: false, error: perm.error });
+            return;
           }
+          runContentScriptCommand(args).then(resolve);
         });
         return;
       }
-      
+
+      // Comandos que usam a nova API Debugger
+      if (["get_accessibility_tree", "simulate_click", "simulate_type", "press_key"].includes(args.command)) {
+        runDebuggerActionAwaitingPermission(args).then(resolve);
+        return;
+      }
+
       // Comandos legados do Content Script
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (!tabs[0]) {
-          resolve({ success: false, error: "No active tab" });
-          return;
-        }
-        chrome.tabs.sendMessage(tabs[0].id, { action: "dom_action", payload: args }, (response) => {
-          if (chrome.runtime.lastError) {
-            const errMsg = chrome.runtime.lastError.message;
-            if (errMsg.includes("Receiving end does not exist")) {
-               resolve({ success: false, error: "A aba atual está bloqueada ou precisa ser atualizada. Por favor, peça ao usuário para ABRIR UMA NOVA ABA e navegar para um site (ex: google.com) antes de pesquisar ou interagir." });
-            } else {
-               resolve({ success: false, error: errMsg });
-            }
-          } else {
-            // Truncar resultados muito grandes para não estourar o contexto do LLM
-            let resultStr = JSON.stringify(response);
-            if (resultStr.length > 20000) {
-              response.data = {
-                 warning: "O DOM era muito grande e foi truncado.",
-                 content: resultStr.substring(0, 20000) + "... [TRUNCADO]"
-              };
-            }
-            resolve(response);
-          }
-        });
-      });
+      runContentScriptCommand(args).then(resolve);
     } else if (name === "capture_screenshot") {
       chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
         if (chrome.runtime.lastError) {
@@ -1891,6 +2266,40 @@ function executeToolInBrowser(name, args) {
         }
         setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
       });
+    } else if (name === "write_file") {
+      var safeName = sanitizeAnyFilename(args.filename);
+      if (!safeName) {
+        resolve({ success: false, error: "Nome de arquivo invalido. Envie algo como 'index.html' ou 'meu_site/style.css'." });
+        return;
+      }
+      var fileContent = typeof args.content === "string" ? args.content : "";
+      if (!fileContent) {
+        resolve({ success: false, error: "Conteudo vazio: envie o conteudo completo do arquivo em 'content'." });
+        return;
+      }
+
+      var fileBlob = new Blob([fileContent], { type: mimeForFilename(safeName) });
+      var fileUrl = URL.createObjectURL(fileBlob);
+      chrome.downloads.download({
+        url: fileUrl,
+        filename: safeName,
+        saveAs: false,
+        conflictAction: "uniquify"
+      }, function (downloadId) {
+        if (chrome.runtime.lastError) {
+          resolve({ success: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve({
+            success: true,
+            message: "Arquivo salvo em Downloads/" + safeName + " (" + fileContent.length + " caracteres)",
+            filename: safeName,
+            downloadId: downloadId
+          });
+        }
+        setTimeout(function () { URL.revokeObjectURL(fileUrl); }, 1000);
+      });
+    } else if (name === "http_request") {
+      executeHttpRequest(args).then(resolve);
     } else if (name === "tab_manager") {
       if (args.command === "create_tab") {
         chrome.tabs.create({ url: args.url, active: true }, function(tab) {
@@ -2027,6 +2436,7 @@ function setupSettingsPanel() {
     openBtn.addEventListener('click', function () {
       panel.classList.remove('hidden');
       renderApprovedSites();
+      renderApiKeys();
       renderShortcutsList();
       var sidebar = document.getElementById('sidebar');
       if (sidebar) sidebar.classList.add('hidden');
@@ -2063,6 +2473,7 @@ function setupSettingsPanel() {
       var modeLabel = document.getElementById('mode-current-label');
       if (modeLabel) modeLabel.textContent = t('mode.' + getAurexMode());
       renderApprovedSites();
+      renderApiKeys();
       renderShortcutsList();
       setDynamicGreeting();
     });
@@ -2211,6 +2622,96 @@ function renderAccountStatus(transient) {
       el.textContent = t('account.loggedOut');
     }
   });
+}
+
+// Mostra a chave sempre mascarada: o valor cheio nunca precisa aparecer na
+// tela depois de salvo.
+function maskApiKey(value) {
+  var str = String(value == null ? '' : value);
+  if (str.length <= 4) return '••••';
+  return '••••' + str.slice(-4);
+}
+
+function saveStoredApiKeys(keys) {
+  localStorage.setItem('aurex_api_keys', JSON.stringify(keys));
+}
+
+function renderApiKeys() {
+  var list = document.getElementById('api-keys-list');
+  if (!list) return;
+
+  var keys = getStoredApiKeys();
+  var names = Object.keys(keys);
+  list.innerHTML = '';
+
+  if (!names.length) {
+    list.innerHTML = '<div class="approved-sites-empty">' + escapeHtml(t('settings.apikeys.empty')) + '</div>';
+    return;
+  }
+
+  names.forEach(function (name) {
+    var item = document.createElement('div');
+    item.className = 'approved-site-item';
+
+    var span = document.createElement('span');
+    span.textContent = name + '  ' + maskApiKey(keys[name]);
+
+    var btn = document.createElement('button');
+    btn.className = 'action-btn danger';
+    btn.textContent = t('settings.apikeys.remove');
+    btn.addEventListener('click', function () {
+      var current = getStoredApiKeys();
+      delete current[name];
+      saveStoredApiKeys(current);
+      renderApiKeys();
+    });
+
+    item.appendChild(span);
+    item.appendChild(btn);
+    list.appendChild(item);
+  });
+}
+
+function setupApiKeysUI() {
+  var addBtn = document.getElementById('add-api-key');
+  var nameInput = document.getElementById('api-key-name');
+  var valueInput = document.getElementById('api-key-value');
+  if (!addBtn || !nameInput || !valueInput) return;
+
+  addBtn.addEventListener('click', function () {
+    var name = nameInput.value.trim();
+    var value = valueInput.value.trim();
+
+    // O nome vira o placeholder {{KEY:NOME}}, então precisa casar com o regex
+    // de substituição — senão a chave nunca seria aplicada.
+    if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+      addBtn.textContent = t('settings.apikeys.invalidName');
+      setTimeout(function () { renderAddKeyButtonLabel(addBtn); }, 1800);
+      return;
+    }
+    if (!value) {
+      addBtn.textContent = t('settings.apikeys.emptyValue');
+      setTimeout(function () { renderAddKeyButtonLabel(addBtn); }, 1800);
+      return;
+    }
+
+    var keys = getStoredApiKeys();
+    keys[name] = value;
+    saveStoredApiKeys(keys);
+
+    nameInput.value = '';
+    valueInput.value = '';
+    renderApiKeys();
+
+    addBtn.textContent = t('settings.apikeys.saved');
+    setTimeout(function () { renderAddKeyButtonLabel(addBtn); }, 1200);
+  });
+
+  renderApiKeys();
+}
+
+function renderAddKeyButtonLabel(btn) {
+  btn.innerHTML = '<i class="fa-solid fa-plus"></i> <span data-i18n="settings.apikeys.add">' + escapeHtml(t('settings.apikeys.add')) + '</span>';
 }
 
 function renderApprovedSites() {
@@ -2911,16 +3412,50 @@ function renderSkillsLists() {
   }
 }
 
-// === LISTENER DE MENSAGENS (PERMISSÕES E WORKFLOW) ===
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === "permission_required") {
+// === PERMISSÕES: espera real pela decisão do usuário ===
+//
+// O agente NÃO desiste quando falta permissão. A ferramenta fica pendente
+// (Promise não resolvida) enquanto o widget aguarda o clique, e é re-executada
+// automaticamente assim que o usuário aprova.
+var _permissionWaits = {}; // origin -> { token, resolvers: [] }
+
+function waitForUserPermission(origin, token) {
+  return new Promise(function (resolve) {
+    // Várias ferramentas podem pedir a mesma origem no mesmo turno; todas
+    // aguardam um único widget em vez de empilhar pedidos repetidos na tela.
+    var existing = _permissionWaits[origin];
+    if (existing) {
+      existing.resolvers.push(resolve);
+      return;
+    }
+    _permissionWaits[origin] = { token: token, resolvers: [resolve] };
+    renderPermissionWidget(origin, token);
+  });
+}
+
+function settleUserPermission(origin, granted) {
+  var entry = _permissionWaits[origin];
+  if (!entry) return;
+  delete _permissionWaits[origin];
+  entry.resolvers.forEach(function (resolve) { resolve(granted); });
+}
+
+// Usada ao trocar de conversa: nenhuma espera pode sobreviver ao chat que a
+// originou, senão a execução antiga fica pendurada sem widget na tela.
+function cancelAllPermissionWaits() {
+  Object.keys(_permissionWaits).forEach(function (origin) {
+    settleUserPermission(origin, false);
+  });
+}
+
+function renderPermissionWidget(origin, token) {
     // Extrai o domínio limpo para mostrar ao usuário
-    let displayDomain = request.origin;
-    try { displayDomain = new URL(request.origin).hostname; } catch(e) {}
+    let displayDomain = origin;
+    try { displayDomain = new URL(origin).hostname; } catch(e) {}
     const safeDisplayDomain = escapeHtml(displayDomain);
-    const safeOrigin = escapeHtml(request.origin);
-    const safeToken = escapeHtml(request.token);
-    
+    const safeOrigin = escapeHtml(origin);
+    const safeToken = escapeHtml(token);
+
     // Widget de permissão no mesmo estilo visual do Plano do Aurex
     const htmlContent = `
       <widget>
@@ -2946,8 +3481,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     // NÃO adicionamos ao chatHistory para não quebrar a sequência tool_calls -> tool
     appendMessageToUI("assistant", htmlContent);
-  }
-});
+}
 
 // Event delegation para botões injetados no chat (permissão e bloqueio)
 var _messagesContainerEl = document.getElementById('messages-container');
@@ -2959,7 +3493,13 @@ if (_messagesContainerEl) _messagesContainerEl.addEventListener('click', (e) => 
     const widgetContainer = e.target.closest('.aurex-widget') || e.target.closest('.message');
     
     chrome.runtime.sendMessage({ type: "grant_permission", origin: origin, token: token }, (response) => {
-      if (!response || !response.success) return;
+      if (!response || !response.success) {
+        // Não deixa a tarefa pendurada: informa o motivo e libera o agente.
+        var reason = (response && response.error) ? response.error : 'Falha ao registrar a permissão.';
+        appendMessageToUI('assistant', '⚠️ Não consegui registrar a permissão para ' + escapeHtml(origin) + ': ' + escapeHtml(reason) + ' Peça a ação novamente.');
+        settleUserPermission(origin, false);
+        return;
+      }
 
       // Animação de saída suave (igual ao plano aprovado)
       if (widgetContainer) {
@@ -2968,6 +3508,9 @@ if (_messagesContainerEl) _messagesContainerEl.addEventListener('click', (e) => 
         widgetContainer.style.transform = 'translateY(-10px) scale(0.98)';
         setTimeout(function() { widgetContainer.style.display = 'none'; }, 400);
       }
+
+      // Destrava a ferramenta que estava esperando -> ela é re-executada sozinha
+      settleUserPermission(origin, true);
     });
   }
   
@@ -2978,12 +3521,16 @@ if (_messagesContainerEl) _messagesContainerEl.addEventListener('click', (e) => 
     const widgetContainer = e.target.closest('.aurex-widget') || e.target.closest('.message');
 
     chrome.runtime.sendMessage({ type: "deny_permission", origin: origin, token: token }, (response) => {
-      if (!response || !response.success || !widgetContainer) return;
+      if (widgetContainer) {
+        widgetContainer.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+        widgetContainer.style.opacity = '0';
+        widgetContainer.style.transform = 'translateY(-10px) scale(0.98)';
+        setTimeout(function() { widgetContainer.style.display = 'none'; }, 400);
+      }
 
-      widgetContainer.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
-      widgetContainer.style.opacity = '0';
-      widgetContainer.style.transform = 'translateY(-10px) scale(0.98)';
-      setTimeout(function() { widgetContainer.style.display = 'none'; }, 400);
+      // Mesmo se o registro falhar, a decisão do usuário foi "não":
+      // liberamos o agente com negativa em vez de deixá-lo travado.
+      settleUserPermission(origin, false);
     });
   }
 });

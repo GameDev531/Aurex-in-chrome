@@ -214,6 +214,17 @@
             </div>
 
             <div class="setting-block">
+              <div class="setting-title" data-i18n="settings.apikeys">Chaves de API</div>
+              <div class="setting-desc" data-i18n="settings.apikeys.desc">Chaves de serviços externos (Google Maps, etc). Ficam salvas só neste navegador — o assistente usa a chave sem nunca ver o valor dela.</div>
+              <div class="api-keys-list" id="api-keys-list"></div>
+              <div class="api-key-form">
+                <input type="text" id="api-key-name" class="setting-select" data-i18n-ph="settings.apikeys.namePh" placeholder="Nome (ex: GOOGLE_MAPS)">
+                <input type="password" id="api-key-value" class="setting-select" style="margin-top:6px;" data-i18n-ph="settings.apikeys.valuePh" placeholder="Cole a chave aqui">
+                <button class="action-btn primary" id="add-api-key" style="margin-top:8px;"><i class="fa-solid fa-plus"></i> <span data-i18n="settings.apikeys.add">Adicionar chave</span></button>
+              </div>
+            </div>
+
+            <div class="setting-block">
               <div class="setting-title" data-i18n="settings.language">Idioma</div>
               <div class="setting-desc" data-i18n="settings.language.desc">Muda o idioma da interface e das respostas do Aurex</div>
               <select id="language-select" class="setting-select"></select>

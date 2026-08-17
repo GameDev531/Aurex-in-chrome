@@ -1904,3 +1904,16 @@ input:checked + .slider { background-color: var(--text-accent); }
 }
 .account-status .account-ok { color: var(--accent-green); margin-right: 4px; }
 .account-status strong { color: var(--text-primary); }
+
+/* --- Chaves de API --- */
+.api-keys-list {
+  margin: 10px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.api-key-form {
+  display: flex;
+  flex-direction: column;
+  margin-top: 4px;
+}

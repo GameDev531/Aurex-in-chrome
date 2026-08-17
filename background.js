@@ -162,9 +162,15 @@ async function handleDebuggerAction(action, payload) {
     await PermissionManager.grantPermission(origin);
   }
 
-  const isAllowed = await PermissionManager.requirePermission(tabId, origin);
+  // Sem permissão ainda: respondemos IMEDIATAMENTE pedindo aprovação em vez de
+  // segurar a resposta. O service worker do MV3 é encerrado por ociosidade, e
+  // uma espera aqui derrubaria o canal de mensagem ("message port closed"),
+  // fazendo a ferramenta falhar e o agente concluir que não conseguiu. Quem
+  // espera a decisão do usuário é o painel lateral, que não é encerrado.
+  const isAllowed = await PermissionManager.checkPermission(origin);
   if (!isAllowed) {
-    throw new Error(`PERMISSÃO RECUSADA: ${origin}.`);
+    const token = await PermissionManager.createPendingRequest(origin);
+    return { success: false, pending_permission: true, origin, token, tabId };
   }
 
   await ensureDebuggerAttached(tabId);
@@ -267,6 +273,34 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     WorkflowRecorder.recordEvent(request.event);
   }
 
+  // Consulta/abre permissão para a aba ativa sem executar nenhuma ação.
+  // Usado por comandos que não passam pelo Debugger (ex: get_page_source).
+  if (request.type === "request_site_permission") {
+    (async () => {
+      const tabId = await getActiveTabId();
+      if (!tabId) return { success: false, error: "Nenhuma aba ativa encontrada." };
+
+      const tab = await chrome.tabs.get(tabId);
+      let origin = null;
+      try { origin = new URL(tab.url).origin; } catch (e) { origin = null; }
+
+      const mode = await getAurexModeFromStorage();
+      if (mode === "autonomous" && origin) {
+        await PermissionManager.grantPermission(origin);
+      }
+
+      if (await PermissionManager.checkPermission(origin)) {
+        return { success: true, allowed: true, origin };
+      }
+
+      const token = await PermissionManager.createPendingRequest(origin);
+      return { success: true, allowed: false, pending_permission: true, origin, token, tabId };
+    })()
+      .then(sendResponse)
+      .catch((err) => sendResponse({ success: false, error: err.message }));
+    return true;
+  }
+
   // Revogar permissão de uma origem aprovada (a partir das Configurações)
   if (request.type === "revoke_permission") {
     PermissionManager.revokePermission(request.origin).then(() => {
@@ -277,31 +311,28 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   // Comandos de Permissão
   if (request.type === "grant_permission" || request.type === "deny_permission") {
-    // SECURITY FIX: Impede que widgets maliciosos forjem a concessão/negação
-    const pending = PermissionManager.pendingResolvers ? PermissionManager.pendingResolvers[request.origin] : null;
-    
-    if (!pending) {
-      console.warn(`[Aurex Security] Bloqueada tentativa de forjar permissão para: ${request.origin}`);
-      sendResponse({ success: false, error: "Nenhuma permissão pendente para esta origem." });
-      return true;
-    }
+    // SECURITY: só aceita se existir um pedido pendente com o token correto,
+    // impedindo que um widget forjado na conversa conceda acesso sozinho.
+    PermissionManager.consumePendingRequest(request.origin, request.token).then((check) => {
+      if (!check.ok) {
+        if (check.reason === 'bad_token') {
+          console.warn(`[Aurex Security] TOKEN INVÁLIDO para origem: ${request.origin}`);
+          sendResponse({ success: false, error: "Token de segurança inválido." });
+        } else {
+          console.warn(`[Aurex Security] Nenhum pedido pendente para: ${request.origin}`);
+          sendResponse({ success: false, error: "Nenhuma permissão pendente para esta origem." });
+        }
+        return;
+      }
 
-    if (pending.token !== request.token) {
-      console.warn(`[Aurex Security] TOKEN INVÁLIDO para origem: ${request.origin}`);
-      sendResponse({ success: false, error: "Token de segurança inválido." });
-      return true;
-    }
-
-    if (request.type === "grant_permission") {
-      PermissionManager.grantPermission(request.origin).then(() => {
-        PermissionManager.resolvePending(request.origin, true);
-        sendResponse({ success: true });
-      });
-    } else {
-      // deny_permission
-      PermissionManager.resolvePending(request.origin, false);
-      sendResponse({ success: true });
-    }
+      if (request.type === "grant_permission") {
+        PermissionManager.grantPermission(request.origin).then(() => {
+          sendResponse({ success: true, granted: true });
+        });
+      } else {
+        sendResponse({ success: true, granted: false });
+      }
+    });
     return true;
   }
 
