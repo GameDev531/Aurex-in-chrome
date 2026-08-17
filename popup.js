@@ -1,6 +1,34 @@
-var AUREX_API_BASE_URL = (localStorage.getItem('aurex_api_base_url') || "https://api.aurexai.com/v1").replace(/\/+$/, '');
+// ===========================================================================
+// ENDPOINT DE PRODUÇÃO
+// Troque a URL abaixo pela URL pública do seu aurex-api depois de publicá-lo
+// (ex: "https://aurex-api.onrender.com"). É isso que torna o produto plug-and-play:
+// o usuário instala e já usa, sem configurar nada. O endpoint /chat/completions
+// é adicionado automaticamente — NÃO inclua /chat/completions nem /v1 aqui se o
+// seu servidor expõe a rota na raiz.
+// ===========================================================================
+var AUREX_PRODUCTION_API_BASE = "https://api.aurexai.com";
+
+var AUREX_API_BASE_URL = (localStorage.getItem('aurex_api_base_url') || AUREX_PRODUCTION_API_BASE).replace(/\/+$/, '');
 var AUREX_API_URL = AUREX_API_BASE_URL + "/chat/completions";
 var AUREX_AUTH_STORAGE_KEY = "aurex_auth_tokens";
+
+// Produto: por padrão EXIGE login (o aurex-api já tem auth OAuth/PKCE, a mesma
+// que o Aurex CLI usa). O usuário pode desligar em Configurações para testes locais.
+var AUREX_REQUIRE_LOGIN_DEFAULT = true;
+
+// Base usada para os endpoints de autenticação. Lê a URL atual das Configurações
+// (não a constante congelada no load) e remove um eventual /v1 final.
+function getAurexAuthBase() {
+  var base = (localStorage.getItem('aurex_api_base_url') || AUREX_PRODUCTION_API_BASE).replace(/\/+$/, '');
+  return base.replace(/\/v1\/?$/, '');
+}
+
+// Login é exigido? (padrão do produto = sim, salvo se o usuário desligar)
+function isLoginRequired() {
+  var stored = localStorage.getItem('aurex_use_login');
+  if (stored === null) return AUREX_REQUIRE_LOGIN_DEFAULT;
+  return stored === 'true';
+}
 
 function storageGet(key) {
   return new Promise((resolve) => chrome.storage.local.get([key], (result) => resolve(result[key] || null)));
@@ -57,7 +85,7 @@ async function loginAurexChrome() {
   var pkce = await createPkcePair();
   var state = randomBase64Url(24);
   var redirectUri = chrome.identity.getRedirectURL("callback");
-  var loginUrl = new URL(AUREX_API_BASE_URL.replace(/\/v1\/?$/, "") + "/auth/login");
+  var loginUrl = new URL(getAurexAuthBase() + "/auth/login");
   loginUrl.searchParams.set("state", state);
   loginUrl.searchParams.set("code_challenge", pkce.challenge);
   loginUrl.searchParams.set("redirect_uri", redirectUri);
@@ -68,7 +96,7 @@ async function loginAurexChrome() {
   var returnedState = callback.searchParams.get("state");
   if (!code || returnedState !== state) throw new Error("Aurex login state mismatch.");
 
-  var response = await fetch(AUREX_API_BASE_URL.replace(/\/v1\/?$/, "") + "/auth/token", {
+  var response = await fetch(getAurexAuthBase() + "/auth/token", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ code: code, code_verifier: pkce.verifier, redirect_uri: redirectUri })
@@ -88,7 +116,7 @@ async function loginAurexChrome() {
 
 async function refreshAurexAccessToken(tokens) {
   if (!tokens || !tokens.refreshToken) return null;
-  var response = await fetch(AUREX_API_BASE_URL.replace(/\/v1\/?$/, "") + "/auth/refresh", {
+  var response = await fetch(getAurexAuthBase() + "/auth/refresh", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ refreshToken: tokens.refreshToken })
@@ -121,7 +149,7 @@ async function getAurexAccessToken() {
 async function logoutAurexChrome() {
   var tokens = await storageGet(AUREX_AUTH_STORAGE_KEY);
   if (tokens?.refreshToken) {
-    await fetch(AUREX_API_BASE_URL.replace(/\/v1\/?$/, "") + "/auth/logout", {
+    await fetch(getAurexAuthBase() + "/auth/logout", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ refreshToken: tokens.refreshToken })
@@ -195,6 +223,40 @@ var SYSTEM_PROMPT = "Voc\u00ea \u00e9 o Aurex, um Web Agent inteligente integrad
 "1. Use dom_action com command='navigate' com value='https://url' para navegar para uma URL.\n" +
 "2. SPAs (Single Page Apps como WhatsApp, Gmail) demoram a carregar a interface apos a navegacao. SEMPRE use command='wait' com value='5000' (5s) logo apos navegar para um SPA antes de ler a arvore.\n\n" +
 "COMANDO press_key: Use command='press_key' com key='Enter' (ou Tab, Escape, ArrowDown, ArrowUp, Backspace, Space) para pressionar uma tecla avulsa. Util para confirmar dialogs, navegar menus dropdown, ou submeter formularios.\n\n" +
+"# PERMISSAO DE SITE: NUNCA DESISTA DA TAREFA\n" +
+"Quando um site ainda nao foi aprovado, o sistema mostra sozinho um pedido de permissao ao usuario e SEGURA a sua ferramenta ate ele decidir. Isso NAO e um erro e NAO e uma falha sua.\n" +
+"1. NAO diga 'nao consegui', 'nao tenho acesso' nem encerre a tarefa por causa disso. A ferramenta simplesmente demora a responder.\n" +
+"2. Quando o usuario aprovar, a acao e repetida automaticamente e voce recebe o resultado normal. Continue a tarefa exatamente de onde parou.\n" +
+"3. Voce so deve parar se o resultado vier com 'PERMISSAO_NEGADA'. Ai sim explique que o site foi bloqueado pelo usuario e pergunte como prosseguir.\n" +
+"4. Nunca peca ao usuario para 'conceder permissao nas configuracoes': o botao de aprovar ja aparece sozinho na conversa.\n\n" +
+"# ESCREVER CODIGO E CLONAR SITES\n" +
+"Voce CONSEGUE programar e reproduzir sites. O caminho e:\n" +
+"1. `dom_action` com command='get_page_source' e value='html' para pegar o HTML real (vem junto a lista de assets: css, js e imagens).\n" +
+"2. value='css' e value='scripts' para os estilos e scripts da pagina. O que for de outra origem vem como URL: baixe com `http_request`.\n" +
+"3. Escreva cada arquivo com `write_file`, respeitando a extensao correta e agrupando tudo numa subpasta (ex: clone_exemplo/index.html, clone_exemplo/style.css, clone_exemplo/script.js).\n" +
+"NUNCA entregue codigo apenas como texto no chat quando o usuario pediu um site ou um arquivo: gere os arquivos de verdade com `write_file`.\n" +
+"Ao reproduzir um site, escreva codigo proprio e limpo a partir do que observou; nao copie textos, imagens ou marcas de terceiros para uso publico sem o usuario ter direito sobre eles.\n\n" +
+"# ARQUITETURA DE FERRAMENTAS (ESCOLHA CERTO)\n" +
+"Voce e um agente operador de navegador. Suas ferramentas vem em quatro familias; escolha SEMPRE a mais barata que resolve:\n" +
+"1. BROWSER TOOLS (`dom_action`, `capture_screenshot`, `tab_manager`): agem NA ABA do usuario. Use quando a tarefa exige a sessao dele — estar logado, clicar, preencher formulario, navegar, conferir o que esta na tela.\n" +
+"2. WEB TOOLS (`web_search`, `web_extract`, `http_request`): trazem informacao DE FORA sem abrir aba, sem pedir permissao e sem o usuario ver nada mudar.\n" +
+"   - `web_search`: para saber de algo (fatos, noticias, dados atuais).\n" +
+"   - `web_extract`: para LER uma pagina especifica. Prefira a `http_request` quando o objetivo e ler texto: gasta muito menos contexto.\n" +
+"   - `http_request`: requisicao crua. Use para APIs, JSON, e para baixar CSS/JS ao clonar um site.\n" +
+"3. EXTERNAL TOOLS (`maps_places` e afins): servicos de terceiros. So aparecem para voce quando o usuario configurou a chave dele. Se a ferramenta esta na sua lista, ela FUNCIONA — pode usar.\n" +
+"4. CORE TOOLS (`write_file`, `save_markdown_file`, `task_memory`): entrega de arquivos e memoria da tarefa.\n" +
+"REGRA DE OURO: nao abra o navegador para o que uma Web Tool resolve. Pesquisar um fato e `web_search`, nao abrir o Google e ler a tela. Ler um artigo e `web_extract`, nao navegar + get_accessibility_tree. Use as Browser Tools quando o valor esta em ESTAR na pagina do usuario.\n\n" +
+"# SITES QUE BLOQUEIAM AUTOMACAO E CHAVES DE API\n" +
+"Alguns servicos (Google Maps, buscadores, redes sociais) detectam e bloqueiam automacao. NAO insista em raspar essas paginas e NUNCA invente uma chave de API.\n" +
+"Para MAPAS E LUGARES: se `maps_places` estiver disponivel, use ela (Google Places API New, com a chave do usuario). Se NAO estiver, nao tente abrir o Google Maps: use os provedores gratuitos abaixo.\n" +
+"Se uma ferramenta externa que resolveria a tarefa nao estiver na sua lista, diga ao usuario qual chave falta e onde cadastrar (Configuracoes > Geral > Chaves de API), e entregue o melhor resultado possivel com as alternativas gratuitas.\n" +
+"Prefira APIs publicas gratuitas e SEM CHAVE via `http_request`:\n" +
+"- Enderecos/coordenadas: https://nominatim.openstreetmap.org/search?q=TERMO&format=json&limit=5\n" +
+"- Lugares proximos (restaurantes, farmacias...): Overpass API em https://overpass-api.de/api/interpreter\n" +
+"- Rotas e distancias: https://router.project-osrm.org/route/v1/driving/LON1,LAT1;LON2,LAT2?overview=false\n" +
+"- Clima: https://api.open-meteo.com/v1/forecast?latitude=..&longitude=..&current_weather=true\n" +
+"- Enciclopedia: https://pt.wikipedia.org/api/rest_v1/page/summary/TITULO\n" +
+"Se a tarefa exigir mesmo um servico pago (ex: Google Places), explique ao usuario que e preciso a chave dele e diga onde colar: Configuracoes > Geral > Chaves de API.\n\n" +
 "REGRA DE SEGURAN\u00c7A CR\u00cdTICA: NUNCA clique em 'Comprar', 'Checkout', 'Pagar' ou submeta formul\u00e1rios financeiros sem autoriza\u00e7\u00e3o expl\u00edcita do usu\u00e1rio.\n" +
 "Use tom direto, evite excesso de emojis e nunca aja como um chatbot gen\u00e9rico.\n\n" +
 "# WIDGET SYSTEM (VISUAL EXCELLENCE)\n" +
@@ -240,18 +302,18 @@ var SYSTEM_PROMPT = "Voc\u00ea \u00e9 o Aurex, um Web Agent inteligente integrad
 "# QUESTIONARIO\n" +
 "Alem do plano, se a tarefa precisar de informacoes extras do usuario (nome do projeto, preferencias, etc), inclua campos de input DENTRO do widget do plano usando q-field/q-label/q-input.";
 
-const TOOLS = [
+const TOOL_DEFINITIONS = [
   {
     type: "function",
     function: {
       name: "dom_action",
-      description: "Interage com a página web ativa. Comandos suportados: get_accessibility_tree (retorna nós semânticos limpos da tela, USE ESTE PRIMEIRO!), simulate_click (clica usando backendDOMNodeId do elemento na árvore), simulate_type (digita usando backendDOMNodeId — use submit=true para pressionar Enter automaticamente apos digitar, ESSENCIAL em campos de pesquisa), press_key (pressiona uma tecla: Enter, Tab, Escape, ArrowDown, ArrowUp, Backspace, Space), read_dom (apenas se a árvore falhar), scroll (rola página), navigate (navega para URL), search_web (pesquisa no google), wait (espera X milissegundos para SPAs carregarem).",
+      description: "Interage com a página web ativa. Comandos suportados: get_accessibility_tree (retorna nós semânticos limpos da tela, USE ESTE PRIMEIRO!), simulate_click (clica usando backendDOMNodeId do elemento na árvore), simulate_type (digita usando backendDOMNodeId — use submit=true para pressionar Enter automaticamente apos digitar, ESSENCIAL em campos de pesquisa), press_key (pressiona uma tecla: Enter, Tab, Escape, ArrowDown, ArrowUp, Backspace, Space), get_page_source (CODIGO-FONTE real da pagina: use value='html' para o HTML completo + lista de assets, value='css' para as folhas de estilo, value='scripts' para os scripts; ESSENCIAL para clonar ou estudar um site), read_dom (apenas se a árvore falhar), scroll (rola página), navigate (navega para URL), search_web (pesquisa no google), wait (espera X milissegundos para SPAs carregarem).",
       parameters: {
         type: "object",
         properties: {
           command: {
             type: "string",
-            enum: ["get_accessibility_tree", "simulate_click", "simulate_type", "press_key", "read_dom", "scroll", "navigate", "search_web", "wait"],
+            enum: ["get_accessibility_tree", "simulate_click", "simulate_type", "press_key", "get_page_source", "read_dom", "scroll", "navigate", "search_web", "wait"],
             description: "O comando a executar"
           },
           id: {
@@ -260,7 +322,7 @@ const TOOLS = [
           },
           value: {
             type: "string",
-            description: "Valor para type (texto), scroll (pixels), navigate (URL destino), search_web (termo), ou wait (ms)"
+            description: "Valor para type (texto), scroll (pixels), navigate (URL destino), search_web (termo), wait (ms), ou get_page_source ('html' | 'css' | 'scripts')"
           },
           submit: {
             type: "boolean",
@@ -310,6 +372,44 @@ const TOOLS = [
   {
     type: "function",
     function: {
+      name: "write_file",
+      description: "Salva um arquivo de TEXTO de qualquer tipo (html, css, js, json, ts, py, svg, csv, txt, md...) na pasta Downloads, respeitando a extensao que voce escolher. Use esta ferramenta para ENTREGAR CODIGO. Para clonar um site, chame uma vez por arquivo e coloque todos na mesma subpasta (ex: clone_exemplo/index.html, clone_exemplo/style.css, clone_exemplo/script.js).",
+      parameters: {
+        type: "object",
+        properties: {
+          filename: {
+            type: "string",
+            description: "Nome do arquivo COM extensao. Pode incluir uma subpasta relativa. Ex: 'index.html' ou 'clone_exemplo/style.css'. Nao use caminhos absolutos nem '..'."
+          },
+          content: {
+            type: "string",
+            description: "Conteudo completo do arquivo, ja pronto para uso."
+          }
+        },
+        required: ["filename", "content"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "http_request",
+      description: "Faz uma requisicao HTTP direta (sem abrir aba e sem CORS). Use para: baixar CSS/JS/HTML de um site que voce esta clonando; e para consultar APIs publicas GRATUITAS E SEM CHAVE em vez de raspar sites que bloqueiam automacao (Google Maps, etc). APIs sem chave recomendadas: Nominatim (nominatim.openstreetmap.org/search?q=...&format=json) para enderecos/coordenadas; Overpass (overpass-api.de/api/interpreter) para lugares proximos; Open-Meteo (api.open-meteo.com) para clima; Wikipedia REST API para enciclopedia. NUNCA invente uma chave de API.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "URL completa http:// ou https://" },
+          method: { type: "string", enum: ["GET", "POST", "PUT", "PATCH", "DELETE"], description: "Metodo HTTP. Padrao GET." },
+          headers: { type: "object", description: "Cabecalhos extras, como { \"Accept\": \"application/json\" }" },
+          body: { type: "string", description: "Corpo da requisicao, ja serializado (ex: JSON como string). Apenas para POST/PUT/PATCH." }
+        },
+        required: ["url"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
       name: "tab_manager",
       description: "Gerencia abas do Chrome. Permite ao Aurex abrir sites em novas abas, listar, alternar ou fechar abas. Use isso para tarefas de pesquisa massiva em paralelo.",
       parameters: {
@@ -337,8 +437,121 @@ const TOOLS = [
         required: ["command"]
       }
     }
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_extract",
+      description: "Baixa uma URL e devolve o conteudo LEGIVEL dela (titulo, texto limpo sem menu/script/rodape, e os links). Use isto em vez de http_request quando voce quer LER um artigo, documentacao ou noticia: gasta muito menos contexto que o HTML cru. Nao abre aba e nao aparece para o usuario.",
+      parameters: {
+        type: "object",
+        properties: {
+          url: { type: "string", description: "URL completa http:// ou https://" },
+          max_chars: { type: "number", description: "Limite de caracteres do texto extraido. Padrao 15000." }
+        },
+        required: ["url"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "web_search",
+      description: "Pesquisa na web e devolve uma resposta com as fontes citadas. Use para perguntas sobre fatos atuais, noticias e dados que voce nao tem. E mais rapido que abrir o navegador e ler paginas manualmente.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "A pergunta ou termo de pesquisa, em linguagem natural." }
+        },
+        required: ["query"]
+      }
+    }
+  },
+  {
+    type: "function",
+    function: {
+      name: "maps_places",
+      description: "Consulta lugares reais no Google Places API (New): restaurantes, lojas, enderecos, avaliacoes e horarios. Comandos: search_text (busca por texto livre, ex: 'pizzaria em Copacabana'), search_nearby (busca por tipo em volta de uma coordenada), details (detalhes completos de um place_id). Prefira esta ferramenta a tentar abrir o Google Maps no navegador, porque o site bloqueia automacao.",
+      parameters: {
+        type: "object",
+        properties: {
+          command: { type: "string", enum: ["search_text", "search_nearby", "details"] },
+          query: { type: "string", description: "Texto da busca (search_text). Ex: 'farmacia 24h no Centro do Rio'" },
+          latitude: { type: "number", description: "Latitude do centro da busca (search_nearby)" },
+          longitude: { type: "number", description: "Longitude do centro da busca (search_nearby)" },
+          radius: { type: "number", description: "Raio em metros para search_nearby. Padrao 1500, maximo 50000." },
+          included_type: { type: "string", description: "Tipo do lugar para search_nearby, no padrao do Google. Ex: restaurant, pharmacy, gas_station, supermarket." },
+          place_id: { type: "string", description: "Identificador do lugar para o comando details (vem como 'id' nos resultados de busca)." },
+          max_results: { type: "number", description: "Quantidade de resultados. Padrao 10, maximo 20." }
+        },
+        required: ["command"]
+      }
+    }
   }
 ];
+
+// ========== ARQUITETURA DE FERRAMENTAS ==========
+// Browser Tools : agem na aba do usuário (CDP, acessibilidade, abas).
+// Web Tools     : trazem informação de fora sem abrir aba.
+// External Tools: serviços de terceiros; só existem se o usuário configurar a
+//                 chave dele. Nenhuma chave vem embutida no produto.
+// Core Tools    : utilidades locais (arquivos, memória da tarefa).
+const TOOL_GROUPS = {
+  browser: ["dom_action", "capture_screenshot", "tab_manager"],
+  web: ["web_search", "web_extract", "http_request"],
+  external: ["maps_places"],
+  core: ["write_file", "save_markdown_file", "task_memory"]
+};
+
+// Integrações que o usuário pluga com a própria chave. `tools` só entram na
+// lista enviada ao modelo quando `key` estiver configurada — assim o Aurex
+// nunca anuncia uma capacidade que não tem como executar.
+const AUREX_INTEGRATIONS = [
+  {
+    key: "GEMINI_API_KEY",
+    label: "Gemini — pesquisa web",
+    tools: ["web_search"],
+    help: "Crie em aistudio.google.com/apikey",
+    modelSetting: { storageKey: "aurex_search_model", defaultValue: "gemini-2.5-flash" }
+  },
+  {
+    key: "GOOGLE_PLACES_API_KEY",
+    label: "Google Places API (New) — mapas e lugares",
+    tools: ["maps_places"],
+    help: "console.cloud.google.com — ative \"Places API (New)\""
+  }
+];
+
+function getToolDefinition(name) {
+  return TOOL_DEFINITIONS.find(function (tool) {
+    return tool.function && tool.function.name === name;
+  }) || null;
+}
+
+// Nomes de ferramentas bloqueadas por falta de chave, com a integração que as libera.
+function getGatedTools() {
+  var configured = getApiKeyNames();
+  var gated = {};
+  AUREX_INTEGRATIONS.forEach(function (integration) {
+    if (configured.indexOf(integration.key) !== -1) return;
+    integration.tools.forEach(function (toolName) { gated[toolName] = integration; });
+  });
+  return gated;
+}
+
+// Lista final enviada ao modelo, na ordem da arquitetura.
+function getActiveTools() {
+  var gated = getGatedTools();
+  var active = [];
+  ["browser", "web", "external", "core"].forEach(function (group) {
+    TOOL_GROUPS[group].forEach(function (toolName) {
+      if (gated[toolName]) return;
+      var def = getToolDefinition(toolName);
+      if (def) active.push(def);
+    });
+  });
+  return active;
+}
 
 let chatHistory = [
   { role: "system", content: SYSTEM_PROMPT }
@@ -388,10 +601,21 @@ function getStoreSkillPresentation(skill) {
 }
 
 document.addEventListener('DOMContentLoaded', () => {
+  if (typeof applyLanguage === 'function') applyLanguage(getAurexLang());
   setDynamicGreeting();
   setupEventListeners();
   setupSkillsPanel();
+  setupModeSelector();
+  setupSettingsPanel();
+  setupApiKeysUI();
+  setupTeachPanel();
+  setupTabSpeech();
   setupMotion();
+  // Esconde o menu de atalhos ao clicar fora ou perder o foco
+  document.addEventListener('click', function (e) {
+    var menu = document.getElementById('slash-menu');
+    if (menu && !menu.contains(e.target)) menu.classList.add('hidden');
+  });
 });
 
 const MotionUI = {
@@ -609,13 +833,16 @@ let currentChatId = Date.now().toString();
 
 function saveChats() {
   let chatIndex = savedChats.findIndex(c => c.id === currentChatId);
-  const firstUserMsg = chatHistory.find(m => m.role === 'user');
+  const firstUserMsg = chatHistory.find(m => m.role === 'user' && !m._ephemeral);
   const title = firstUserMsg ? (typeof firstUserMsg.content === 'string' ? firstUserMsg.content.substring(0, 35) : 'Chat').replace(/\n/g, ' ') + '...' : 'Novo Chat';
-  
+
+  // Remove mensagens efêmeras (voz não-lembrada) antes de persistir
+  const persistHistory = chatHistory.filter(m => !m._ephemeral);
+
   if (chatIndex > -1) {
-    savedChats[chatIndex] = { id: currentChatId, title, history: chatHistory };
-  } else if (chatHistory.length > 1) {
-    savedChats.unshift({ id: currentChatId, title, history: chatHistory });
+    savedChats[chatIndex] = { id: currentChatId, title, history: persistHistory };
+  } else if (persistHistory.length > 1) {
+    savedChats.unshift({ id: currentChatId, title, history: persistHistory });
   }
   // Limita a 50 chats para não explodir o localStorage
   if (savedChats.length > 50) savedChats = savedChats.slice(0, 50);
@@ -625,16 +852,14 @@ function saveChats() {
 
 function deleteChat(id, event) {
   if (event) event.stopPropagation();
-  if (confirm('Tem certeza que deseja excluir este chat?')) {
-    savedChats = savedChats.filter(c => c.id !== id);
-    localStorage.setItem('aurex_chats', JSON.stringify(savedChats));
-    
-    if (currentChatId === id) {
-      const newChatBtn = document.getElementById('new-chat-btn');
-      if (newChatBtn) newChatBtn.click();
-    } else {
-      renderSidebarChats();
-    }
+  savedChats = savedChats.filter(c => c.id !== id);
+  localStorage.setItem('aurex_chats', JSON.stringify(savedChats));
+
+  if (currentChatId === id) {
+    const newChatBtn = document.getElementById('new-chat-btn');
+    if (newChatBtn) newChatBtn.click();
+  } else {
+    renderSidebarChats();
   }
 }
 
@@ -676,10 +901,18 @@ function renderSidebarChats() {
     
     deleteBtn.onmouseover = () => deleteBtn.style.color = '#ff4444';
     deleteBtn.onmouseout = () => deleteBtn.style.color = 'var(--text-secondary)';
-    deleteBtn.onclick = (e) => deleteChat(chat.id, e);
+    deleteBtn.addEventListener('click', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      deleteChat(chat.id, e);
+    });
 
-    li.onclick = () => loadChat(chat.id);
-    
+    // Clicar na linha abre o chat — mas ignora cliques no botão de excluir
+    li.addEventListener('click', (e) => {
+      if (e.target.closest('button')) return;
+      loadChat(chat.id);
+    });
+
     li.appendChild(titleSpan);
     li.appendChild(deleteBtn);
     list.appendChild(li);
@@ -707,7 +940,8 @@ function loadChat(id) {
 
 function setDynamicGreeting() {
   const greetingEl = document.getElementById('dynamic-greeting');
-  const username = document.getElementById('sidebar-username').innerText;
+  const usernameEl = document.getElementById('sidebar-username');
+  const username = usernameEl ? usernameEl.innerText : 'Aurex';
   const hour = new Date().getHours();
   
   let timeGreeting = "Bom dia";
@@ -727,35 +961,44 @@ function setupEventListeners() {
   const sidebar = document.getElementById('sidebar');
   
   // Hamburger abre o menu fullscreen
-  toggleSidebarBtn.addEventListener('click', () => {
-    sidebar.classList.remove('hidden');
+  if (toggleSidebarBtn) toggleSidebarBtn.addEventListener('click', () => {
+    if (sidebar) sidebar.classList.remove('hidden');
   });
-  
+
   // X fecha o menu
-  closeSidebarBtn.addEventListener('click', () => {
-    sidebar.classList.add('hidden');
+  if (closeSidebarBtn) closeSidebarBtn.addEventListener('click', () => {
+    if (sidebar) sidebar.classList.add('hidden');
   });
 
   // Começa escondido
-  sidebar.classList.add('hidden');
+  if (sidebar) sidebar.classList.add('hidden');
 
   // Renderiza inicial
   renderSidebarChats();
 
   // New Chat
   const newChatBtn = document.getElementById('new-chat-btn');
-  newChatBtn.addEventListener('click', () => {
+  if (newChatBtn) newChatBtn.addEventListener('click', () => {
+    // Se a conversa anterior estava parada esperando uma permissão, o widget
+    // some com o histórico. Encerramos a espera para não deixar a execução
+    // antiga pendurada para sempre.
+    cancelAllPermissionWaits();
     currentChatId = Date.now().toString();
     chatHistory = [{ role: "system", content: SYSTEM_PROMPT }];
     let newTask = localStorage.getItem("aurex_active_task");
     if (newTask) chatHistory[0].content += "\n\n# MEMORIA DA TAREFA ATIVA:\n" + newTask;
-    document.getElementById('messages-container').innerHTML = '';
-    document.getElementById('welcome-screen').style.display = 'flex';
-    document.getElementById('chat-interface').style.display = 'none';
-    
-    document.getElementById('main-input').value = '';
-    document.getElementById('chat-bottom-input').value = '';
-    sidebar.classList.add('hidden');
+    const mc = document.getElementById('messages-container');
+    if (mc) mc.innerHTML = '';
+    const ws = document.getElementById('welcome-screen');
+    if (ws) ws.style.display = 'flex';
+    const ci = document.getElementById('chat-interface');
+    if (ci) ci.style.display = 'none';
+
+    const mi = document.getElementById('main-input');
+    if (mi) mi.value = '';
+    const cbi = document.getElementById('chat-bottom-input');
+    if (cbi) cbi.value = '';
+    if (sidebar) sidebar.classList.add('hidden');
   });
 
   // Search feature
@@ -787,31 +1030,37 @@ function setupEventListeners() {
     }
 
     if (text === '/logout') {
-      logoutAurexChrome().then(() => appendMessageToUI('assistant', 'Logout Aurex concluido.'));
-      mainInput.value = '';
-      chatInput.value = '';
+      logoutAurexChrome()
+        .then(() => { if (typeof renderAccountStatus === 'function') renderAccountStatus(); appendMessageToUI('assistant', t('account.logoutDone')); })
+        .catch((error) => appendMessageToUI('assistant', 'Falha no logout Aurex: ' + error.message));
+      if (mainInput) mainInput.value = '';
+      if (chatInput) chatInput.value = '';
       return;
     }
 
     switchToChatMode();
-    mainInput.value = '';
-    chatInput.value = '';
+    if (mainInput) mainInput.value = '';
+    if (chatInput) chatInput.value = '';
     sendUserMessage(text);
   };
 
-  mainSendBtn.addEventListener('click', () => handleSend(mainInput.value));
-  mainInput.addEventListener('keydown', (e) => {
+  if (mainSendBtn && mainInput) mainSendBtn.addEventListener('click', () => handleSend(mainInput.value));
+  if (mainInput) mainInput.addEventListener('keydown', (e) => {
+    if (handleSlashKeydown(e, mainInput)) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(mainInput.value); }
   });
 
-  chatSendBtn.addEventListener('click', () => handleSend(chatInput.value));
-  chatInput.addEventListener('keydown', (e) => {
+  if (chatSendBtn && chatInput) chatSendBtn.addEventListener('click', () => handleSend(chatInput.value));
+  if (chatInput) chatInput.addEventListener('keydown', (e) => {
+    if (handleSlashKeydown(e, chatInput)) return;
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(chatInput.value); }
   });
+  if (mainInput) mainInput.addEventListener('input', () => maybeShowSlashMenu(mainInput));
+  if (chatInput) chatInput.addEventListener('input', () => maybeShowSlashMenu(chatInput));
 
-  // Skills (apenas botões de skill regulares, exclui o 'Mais skills')
+  // Skills (apenas botões de skill regulares, exclui 'Mais skills' e 'Ensinar Aurex')
   document.querySelectorAll('.skill-btn').forEach(btn => {
-    if (btn.id === 'btn-more-skills') return; // Pula este botão
+    if (btn.id === 'btn-more-skills' || btn.id === 'btn-teach-aurex') return; // Pula estes botões
     btn.addEventListener('click', () => {
       switchToChatMode();
       sendUserMessage(`Por favor, use sua habilidade para: ${btn.innerText.trim()}`);
@@ -1000,7 +1249,7 @@ function renderWidgetContent(htmlContent, container) {
       FORBID_TAGS: ['style'],
       FORBID_ATTR: ['style', 'onclick'],
       ADD_TAGS: ['widget'], // <style> removido por segurança
-      ADD_ATTR: ['data-prompt', 'class'] // 'onclick' e 'style' removidos por segurança
+      ADD_ATTR: ['data-prompt', 'data-slash-action', 'class'] // 'onclick' e 'style' removidos por segurança
     });
   } else {
     // Se DOMPurify falhar, recusa renderizar HTML cru do modelo (fail-safe)
@@ -1026,7 +1275,21 @@ function renderWidgetContent(htmlContent, container) {
       window.sendPrompt(promptText);
     });
   });
-  
+
+  // Ações do menu de atalhos (/atalhos): gravar fluxo / agendar tarefa
+  widgetDiv.querySelectorAll('[data-slash-action]').forEach(function(el) {
+    el.addEventListener('click', function() {
+      var action = this.getAttribute('data-slash-action');
+      if (action === 'record') {
+        var teach = document.getElementById('teach-panel');
+        if (teach) teach.classList.remove('hidden');
+      } else if (action === 'schedule') {
+        switchToChatMode();
+        sendUserMessage('Quero agendar uma tarefa. Pergunte-me o que devo agendar e quando.');
+      }
+    });
+  });
+
   container.appendChild(widgetDiv);
   MotionUI.enterWidget(widgetDiv);
 }
@@ -1404,13 +1667,19 @@ function _resetLoopDetector() {
 
 let isLLMProcessing = false;
 
-async function sendUserMessage(text) {
+async function sendUserMessage(text, options) {
   if (isLLMProcessing) return; // Impede duplo envio ou interrupção do loop
+  options = options || {};
 
   var messageContent = text;
-  
+
   appendMessageToUI('user', messageContent);
-  chatHistory.push({ role: "user", content: messageContent });
+  var msg = { role: "user", content: messageContent };
+  // Mensagens de voz são efêmeras: o Aurex segue o conteúdo, mas elas não são
+  // persistidas no histórico salvo (descartadas), a não ser que o usuário peça
+  // para lembrar nesta conversa.
+  if (options.ephemeral) msg._ephemeral = true;
+  chatHistory.push(msg);
 
   isLLMProcessing = true;
   _resetLoopDetector();
@@ -1434,36 +1703,82 @@ async function processLLMLoop(iterationCount = 0) {
     loadingDiv = document.createElement('div');
     loadingDiv.className = `message assistant thinking-message`;
     loadingDiv.innerHTML = `<div class="message-sender">Aurex</div><div class="message-content"><div class="thinking-indicator"><span class="thinking-orb"></span><div class="thinking-copy"><strong>Pensando</strong><span>Organizando contexto da aba</span></div><div class="thinking-dots"><i class="thinking-dot"></i><i class="thinking-dot"></i><i class="thinking-dot"></i></div><div class="thinking-track"><span class="thinking-bar"></span></div></div></div>`;
-    document.getElementById('messages-container').appendChild(loadingDiv);
+    var _mc = document.getElementById('messages-container');
+    if (_mc) _mc.appendChild(loadingDiv);
     MotionUI.enterMessage(loadingDiv);
     MotionUI.animateThinking(loadingDiv);
 
-    let accessToken = await getAurexAccessToken();
+    // Monta endpoint e autenticação conforme as Configurações de servidor.
+    // PRODUTO (padrão): exige login OAuth/PKCE — o mesmo do aurex-api/CLI.
+    // - "Chave da API" preenchida  -> envia Bearer com essa chave (uso avançado)
+    // - login exigido (padrão)     -> obtém/renova o token via getAurexAccessToken()
+    // - login desligado            -> sem Authorization (servidor cuida da chave do LLM)
+    var apiBase = (localStorage.getItem('aurex_api_base_url') || AUREX_PRODUCTION_API_BASE).replace(/\/+$/, '');
+    var apiUrl = apiBase + '/chat/completions';
+    var requestHeaders = { "Content-Type": "application/json" };
+    var apiKey = (localStorage.getItem('aurex_api_key') || '').trim();
+    if (apiKey) {
+      requestHeaders["Authorization"] = "Bearer " + apiKey;
+    } else if (isLoginRequired()) {
+      let accessToken = await getAurexAccessToken();
+      requestHeaders["Authorization"] = "Bearer " + accessToken;
+    }
 
-    // Prepara payload injetando skills ativas
+    // Prepara payload injetando skills ativas, modo, idioma e personalidade
     _ensureValidToolCallHistory();
     let requestMessages = [...chatHistory];
     if (requestMessages[0] && requestMessages[0].role === "system") {
+      let extraDirectives = "";
+
+      // Modo de operação (Plano / Normal / Autônomo)
+      extraDirectives += getModeDirective();
+
+      // Chaves de API do usuário: enviamos apenas os NOMES. O valor fica no
+      // navegador e só é injetado na hora do fetch (ver substituteApiKeys).
+      var apiKeyNames = getApiKeyNames();
+      if (apiKeyNames.length) {
+        extraDirectives += "\n\n# CHAVES DE API DISPONIVEIS\n" +
+          "O usuario cadastrou estas chaves: " + apiKeyNames.join(", ") + ".\n" +
+          "Para usar uma delas em `http_request`, escreva o placeholder {{KEY:NOME}} na URL, nos headers ou no body (ex: {{KEY:" + apiKeyNames[0] + "}}).\n" +
+          "O sistema troca pelo valor real na hora do envio. Voce NUNCA ve o valor da chave e NUNCA deve pedir que o usuario digite a chave no chat.";
+      }
+
+      // Idioma escolhido pelo usuário (muda a cada requisição se trocado)
+      if (typeof getLanguageDirective === "function") {
+        extraDirectives += getLanguageDirective();
+      }
+
+      // Personalidade customizada
+      let personality = (localStorage.getItem('aurex_personality') || '').trim();
+      if (personality) {
+        extraDirectives += "\n\n# PERSONALIDADE\nAdote o seguinte comportamento e tom em todas as respostas:\n" + personality;
+      }
+
+      // Formato de arquivo preferido
+      let fileExt = localStorage.getItem('aurex_file_ext') || 'md';
+      if (fileExt !== 'md') {
+        extraDirectives += "\n\n# FORMATO DE ARQUIVO\nAo salvar arquivos com save_markdown_file, o usuário prefere a extensão ." + fileExt + ". Gere o conteúdo adequado a esse formato e use a extensão ." + fileExt + " no nome do arquivo.";
+      }
+
+      // Skills ativas
       let activeSkills = (JSON.parse(localStorage.getItem('aurex_user_skills')) || []).filter(s => s.active);
       if (activeSkills.length > 0) {
-        let skillsText = "\n\n# SKILLS ATIVAS OBRIGATÓRIAS\nSiga RIGOROSAMENTE as seguintes diretrizes impostas pelo usuário:\n";
+        extraDirectives += "\n\n# SKILLS ATIVAS OBRIGATÓRIAS\nSiga RIGOROSAMENTE as seguintes diretrizes impostas pelo usuário:\n";
         activeSkills.forEach(s => {
-          skillsText += `\n[SKILL: ${s.name}]\n${s.inst}\n`;
+          extraDirectives += `\n[SKILL: ${s.name}]\n${s.inst}\n`;
         });
-        requestMessages[0] = { ...requestMessages[0], content: requestMessages[0].content + skillsText };
       }
+
+      requestMessages[0] = { ...requestMessages[0], content: requestMessages[0].content + extraDirectives };
     }
 
-    let response = await fetch(AUREX_API_URL, {
+    let response = await fetch(apiUrl, {
       method: "POST",
-      headers: { 
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${accessToken}`
-      },
+      headers: requestHeaders,
       body: JSON.stringify({
         model: "AurexAI",
         messages: requestMessages,
-        tools: TOOLS,
+        tools: getActiveTools(),
         temperature: 0.2
       })
     });
@@ -1512,6 +1827,10 @@ async function processLLMLoop(iterationCount = 0) {
     }
 
     const data = await response.json();
+    if (!data || !Array.isArray(data.choices) || !data.choices[0] || !data.choices[0].message) {
+      appendMessageToUI('assistant', "❌ Resposta do servidor em formato inesperado.\n\nO Aurex espera o formato OpenAI: { \"choices\": [ { \"message\": { \"role\": \"assistant\", \"content\": \"...\" } } ] }.\n\nRecebido: " + escapeHtml(JSON.stringify(data).slice(0, 500)));
+      return;
+    }
     const responseMsg = data.choices[0].message;
 
     chatHistory.push(responseMsg);
@@ -1649,27 +1968,660 @@ async function processLLMLoop(iterationCount = 0) {
 
       // Recursively call LLM with tool result
       await processLLMLoop(iterationCount + 1);
+    } else if (iterationCount > 0 && _isVisibleAssistantMessage(responseMsg)) {
+      // Resposta final sem novas ferramentas após executar trabalho: tarefa concluída
+      notifyTaskComplete('Sua tarefa foi concluída pelo Aurex.');
     }
   } catch (error) {
     if (loadingDiv) loadingDiv.remove();
 
     const fetchFailed = error instanceof TypeError && error.message === "Failed to fetch";
+    var apiBaseShown = (localStorage.getItem('aurex_api_base_url') || 'https://api.aurexai.com/v1');
     if (fetchFailed) {
-      appendServiceUnavailableMessage();
+      // N\u00e3o conseguiu nem conectar: provavelmente URL errada do servidor ou CORS
+      appendMessageToUI('assistant', "\u274c N\u00e3o consegui conectar ao servidor (" + escapeHtml(apiBaseShown) + ").\n\nVerifique em Configura\u00e7\u00f5es \u25b8 Geral \u25b8 Servidor:\n\u2022 se a URL do servidor est\u00e1 correta (ex: http://localhost:3000/v1);\n\u2022 se o servidor est\u00e1 rodando e aceita requisi\u00e7\u00f5es da extens\u00e3o (CORS);\n\u2022 marque \"Servidor local (sem login)\" se ele n\u00e3o usa OAuth.");
     } else {
-      appendMessageToUI('assistant', "\u274c Erro de conex\u00e3o com o servidor. Tente novamente mais tarde.");
+      var detail = error && error.message ? error.message : String(error);
+      appendMessageToUI('assistant', "\u274c Erro ao falar com o servidor: " + escapeHtml(detail) + "\n\nSe estiver usando um servidor local, abra Configura\u00e7\u00f5es \u25b8 Geral \u25b8 Servidor e marque \"Servidor local (sem login)\".");
     }
     console.warn("[Aurex] Falha no loop do modelo:", error && error.message ? error.message : error);
   }
 }
 
 function sanitizeMarkdownFilename(filename) {
-  var value = String(filename || "aurex_output.md").replace(/\\/g, "/").split("/").pop().trim();
+  var ext = (localStorage.getItem('aurex_file_ext') || 'md').toLowerCase();
+  var value = String(filename || ("aurex_output." + ext)).replace(/\\/g, "/").split("/").pop().trim();
   value = value.replace(/[<>:"|?*\x00-\x1F]/g, "_");
   value = value.replace(/^\.+/, "").trim();
-  if (!value) value = "aurex_output.md";
-  if (!/\.md$/i.test(value)) value += ".md";
+  if (!value) value = "aurex_output." + ext;
+  // Remove qualquer extensão conhecida existente e aplica a escolhida pelo usuário
+  value = value.replace(/\.(md|txt|html|csv|json)$/i, "");
+  value += "." + ext;
   return value;
+}
+
+// Sanitiza um nome de arquivo arbitrário PRESERVANDO a extensão escolhida pelo
+// modelo (ao contrário de sanitizeMarkdownFilename, que força a extensão das
+// Configurações). Aceita subpastas relativas e bloqueia travessia de diretório.
+function sanitizeAnyFilename(filename) {
+  var raw = String(filename == null ? "" : filename).replace(/\\/g, "/").trim();
+  raw = raw.replace(/^[a-zA-Z]:\//, "").replace(/^\/+/, "");
+
+  var parts = raw.split("/").filter(function (part) {
+    return part && part !== "." && part !== "..";
+  });
+
+  var cleaned = parts.map(function (part) {
+    return part.replace(/[<>:"|?*\x00-\x1F]/g, "_").replace(/^\.+/, "").trim();
+  }).filter(Boolean);
+
+  if (!cleaned.length) return null;
+
+  var last = cleaned[cleaned.length - 1];
+  if (!/\.[A-Za-z0-9]{1,8}$/.test(last)) last += ".txt";
+  cleaned[cleaned.length - 1] = last;
+
+  return cleaned.join("/");
+}
+
+function mimeForFilename(filename) {
+  var ext = String(filename).split(".").pop().toLowerCase();
+  var map = {
+    html: "text/html", htm: "text/html",
+    css: "text/css",
+    js: "text/javascript", mjs: "text/javascript", jsx: "text/javascript",
+    json: "application/json",
+    md: "text/markdown", txt: "text/plain",
+    csv: "text/csv", tsv: "text/tab-separated-values",
+    svg: "image/svg+xml", xml: "application/xml",
+    yml: "text/plain", yaml: "text/plain"
+  };
+  return (map[ext] || "text/plain") + ";charset=utf-8";
+}
+
+function fileMimeForExt() {
+  var ext = (localStorage.getItem('aurex_file_ext') || 'md').toLowerCase();
+  var map = {
+    md: "text/markdown;charset=utf-8",
+    txt: "text/plain;charset=utf-8",
+    html: "text/html;charset=utf-8",
+    csv: "text/csv;charset=utf-8",
+    json: "application/json;charset=utf-8"
+  };
+  return map[ext] || "text/plain;charset=utf-8";
+}
+
+// Requisição HTTP direta a partir do painel. A extensão tem host_permissions
+// para http/https, então não há bloqueio de CORS — é o caminho para consultar
+// APIs públicas sem chave em vez de raspar sites que barram automação.
+var HTTP_REQUEST_TIMEOUT_MS = 30000;
+var HTTP_MAX_CHARS = 120000;
+
+// Chaves de API do usuário: ficam apenas no navegador dele. O modelo conhece
+// somente os NOMES e escreve {{KEY:NOME}}; a troca pelo valor real acontece
+// aqui, na hora do fetch, para a chave nunca entrar no contexto do LLM.
+function getStoredApiKeys() {
+  try {
+    var raw = localStorage.getItem('aurex_api_keys');
+    var parsed = raw ? JSON.parse(raw) : {};
+    return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+  } catch (e) {
+    return {};
+  }
+}
+
+function getApiKeyNames() {
+  var keys = getStoredApiKeys();
+  return Object.keys(keys).filter(function (name) {
+    return String(keys[name] || '').trim() !== '';
+  });
+}
+
+var API_KEY_PLACEHOLDER = /\{\{\s*KEY\s*:\s*([A-Za-z0-9_.-]+)\s*\}\}/g;
+
+// Retorna { text, missing: [nomes] }. Nunca lança, para o chamador poder
+// avisar o modelo qual chave falta em vez de disparar a requisição sem ela.
+function substituteApiKeys(text) {
+  if (typeof text !== 'string' || text.indexOf('{{') === -1) return { text: text, missing: [] };
+  var keys = getStoredApiKeys();
+  var missing = [];
+  var out = text.replace(API_KEY_PLACEHOLDER, function (match, name) {
+    var value = keys[name];
+    if (typeof value !== 'string' || !value.trim()) {
+      if (missing.indexOf(name) === -1) missing.push(name);
+      return match;
+    }
+    return value.trim();
+  });
+  return { text: out, missing: missing };
+}
+
+async function executeHttpRequest(args) {
+  var rawUrl = String(args && args.url ? args.url : "").trim();
+  if (!rawUrl) return { success: false, error: "Informe a URL." };
+
+  // A URL original (com o placeholder) é a que voltará para o modelo.
+  var displayUrl = rawUrl;
+  var urlSub = substituteApiKeys(rawUrl);
+  if (urlSub.missing.length) {
+    return {
+      success: false,
+      error: "Chave de API nao configurada: " + urlSub.missing.join(", ") +
+             ". Peca ao usuario para cadastrar em Configuracoes > Geral > Chaves de API, ou use uma alternativa gratuita sem chave."
+    };
+  }
+  rawUrl = urlSub.text;
+
+  var parsedUrl;
+  try {
+    parsedUrl = new URL(rawUrl);
+  } catch (e) {
+    return { success: false, error: "URL invalida: " + rawUrl };
+  }
+  if (parsedUrl.protocol !== "http:" && parsedUrl.protocol !== "https:") {
+    return { success: false, error: "Somente http:// e https:// sao permitidos (recebido: " + parsedUrl.protocol + ")." };
+  }
+
+  var method = String(args.method || "GET").toUpperCase();
+  var allowedMethods = ["GET", "POST", "PUT", "PATCH", "DELETE"];
+  if (allowedMethods.indexOf(method) === -1) {
+    return { success: false, error: "Metodo HTTP nao suportado: " + method };
+  }
+
+  var headers = {};
+  var missingKeys = [];
+  if (args.headers && typeof args.headers === "object") {
+    Object.keys(args.headers).forEach(function (key) {
+      var val = args.headers[key];
+      if (typeof val !== "string" && typeof val !== "number") return;
+      var sub = substituteApiKeys(String(val));
+      missingKeys = missingKeys.concat(sub.missing);
+      headers[key] = sub.text;
+    });
+  }
+
+  var requestBody = typeof args.body === "string" ? args.body : undefined;
+  if (requestBody !== undefined) {
+    var bodySub = substituteApiKeys(requestBody);
+    missingKeys = missingKeys.concat(bodySub.missing);
+    requestBody = bodySub.text;
+  }
+
+  if (missingKeys.length) {
+    return {
+      success: false,
+      error: "Chave de API nao configurada: " + missingKeys.join(", ") +
+             ". Peca ao usuario para cadastrar em Configuracoes > Geral > Chaves de API, ou use uma alternativa gratuita sem chave."
+    };
+  }
+
+  var controller = new AbortController();
+  var timeoutId = setTimeout(function () { controller.abort(); }, HTTP_REQUEST_TIMEOUT_MS);
+
+  try {
+    var init = { method: method, headers: headers, signal: controller.signal, redirect: "follow" };
+    if (method !== "GET" && method !== "DELETE" && requestBody !== undefined) {
+      init.body = requestBody;
+    }
+
+    var res = await fetch(parsedUrl.toString(), init);
+    var contentType = res.headers.get("content-type") || "";
+
+    // Conteúdo binário não vira texto útil para o modelo — reportamos em vez
+    // de despejar bytes corrompidos no contexto.
+    var isTextual = /^(text\/|application\/(json|xml|javascript|xhtml|rss|atom|x-www-form-urlencoded)|image\/svg)/i.test(contentType) || contentType === "";
+    if (!isTextual) {
+      var blob = await res.blob();
+      clearTimeout(timeoutId);
+      return {
+        success: res.ok,
+        status: res.status,
+        url: displayUrl,
+        contentType: contentType,
+        binary: true,
+        sizeBytes: blob.size,
+        message: "Conteudo binario (" + contentType + ", " + blob.size + " bytes) nao foi convertido em texto."
+      };
+    }
+
+    var text = await res.text();
+    clearTimeout(timeoutId);
+
+    var truncated = false;
+    var totalChars = text.length;
+    if (text.length > HTTP_MAX_CHARS) {
+      text = text.slice(0, HTTP_MAX_CHARS) + "\n\n/* [AUREX] TRUNCADO: " + (totalChars - HTTP_MAX_CHARS) + " caracteres restantes */";
+      truncated = true;
+    }
+
+    return {
+      // Status de erro não é falha da ferramenta: o modelo precisa ver o código
+      // e o corpo para decidir o que fazer.
+      success: res.ok,
+      status: res.status,
+      statusText: res.statusText,
+      url: displayUrl,
+      contentType: contentType,
+      truncated: truncated,
+      totalChars: totalChars,
+      body: text,
+      error: res.ok ? undefined : "HTTP " + res.status + " " + res.statusText
+    };
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err && err.name === "AbortError") {
+      return { success: false, error: "Tempo esgotado (" + (HTTP_REQUEST_TIMEOUT_MS / 1000) + "s) ao acessar " + parsedUrl.hostname + "." };
+    }
+    return { success: false, error: "Falha de rede ao acessar " + parsedUrl.hostname + ": " + (err && err.message ? err.message : String(err)) };
+  }
+}
+
+// ===== WEB TOOLS =====
+
+// Converte HTML em texto legível. O parse é feito num documento inerte
+// (DOMParser não executa script nem carrega recursos), então é seguro rodar
+// isso sobre HTML de terceiros.
+function extractReadableText(html, baseUrl, maxChars) {
+  var doc = new DOMParser().parseFromString(html, "text/html");
+
+  doc.querySelectorAll("script, style, noscript, iframe, svg, nav, header, footer, aside, form").forEach(function (el) {
+    el.remove();
+  });
+
+  var container = doc.querySelector("article") || doc.querySelector("main") || doc.body;
+  if (!container) return { title: "", text: "", links: [] };
+
+  // Marca fronteiras de bloco para o texto não virar um parágrafo único.
+  container.querySelectorAll("p, div, section, article, h1, h2, h3, h4, h5, h6, li, tr, br").forEach(function (el) {
+    el.appendChild(doc.createTextNode("\n"));
+  });
+
+  var text = (container.textContent || "")
+    .replace(/[ \t ]+/g, " ")
+    .replace(/ ?\n ?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  var truncated = false;
+  var totalChars = text.length;
+  if (text.length > maxChars) {
+    text = text.slice(0, maxChars) + "\n\n[AUREX] TRUNCADO: " + (totalChars - maxChars) + " caracteres restantes.";
+    truncated = true;
+  }
+
+  var links = [];
+  var seen = {};
+  Array.from(container.querySelectorAll("a[href]")).forEach(function (a) {
+    if (links.length >= 50) return;
+    var label = (a.textContent || "").replace(/\s+/g, " ").trim();
+    if (!label) return;
+    var href = a.getAttribute("href");
+    try { href = new URL(href, baseUrl).toString(); } catch (e) { return; }
+    if (seen[href]) return;
+    seen[href] = true;
+    links.push({ text: label.slice(0, 100), href: href });
+  });
+
+  var titleEl = doc.querySelector("title");
+  return {
+    title: titleEl ? titleEl.textContent.trim() : "",
+    text: text,
+    truncated: truncated,
+    totalChars: totalChars,
+    links: links
+  };
+}
+
+async function executeWebExtract(args) {
+  var url = String(args && args.url ? args.url : "").trim();
+  if (!url) return { success: false, error: "Informe a URL." };
+
+  var maxChars = parseInt(args.max_chars, 10);
+  if (!isFinite(maxChars) || maxChars <= 0) maxChars = 15000;
+  maxChars = Math.min(maxChars, 100000);
+
+  var res = await executeHttpRequest({
+    url: url,
+    method: "GET",
+    headers: { "Accept": "text/html,application/xhtml+xml,text/plain" }
+  });
+
+  if (!res.success) return res;
+  if (res.binary) {
+    return { success: false, error: "A URL retornou conteudo binario (" + res.contentType + "), nao da para extrair texto." };
+  }
+
+  var isHtml = /html|xml/i.test(res.contentType || "");
+  if (!isHtml) {
+    var plain = String(res.body || "");
+    var cut = plain.length > maxChars;
+    return {
+      success: true,
+      url: res.url,
+      contentType: res.contentType,
+      text: cut ? plain.slice(0, maxChars) + "\n\n[AUREX] TRUNCADO." : plain,
+      truncated: cut
+    };
+  }
+
+  var extracted = extractReadableText(res.body, url, maxChars);
+  return {
+    success: true,
+    url: res.url,
+    title: extracted.title,
+    text: extracted.text,
+    truncated: extracted.truncated,
+    totalChars: extracted.totalChars,
+    links: extracted.links
+  };
+}
+
+// Pesquisa web via Gemini com grounding do Google Search. A chave é do usuário
+// e é injetada no header pelo substituteApiKeys, nunca pelo modelo.
+async function executeWebSearch(args) {
+  var query = String(args && args.query ? args.query : "").trim();
+  if (!query) return { success: false, error: "Informe a pesquisa em 'query'." };
+
+  var model = (localStorage.getItem("aurex_search_model") || "gemini-2.5-flash").trim() || "gemini-2.5-flash";
+
+  var res = await executeHttpRequest({
+    url: "https://generativelanguage.googleapis.com/v1beta/models/" + encodeURIComponent(model) + ":generateContent",
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-goog-api-key": "{{KEY:GEMINI_API_KEY}}"
+    },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text: query }] }],
+      tools: [{ google_search: {} }]
+    })
+  });
+
+  if (!res.success) {
+    return {
+      success: false,
+      error: "Pesquisa falhou (" + (res.status || "sem resposta") + "): " + (res.error || "") +
+             " Verifique a chave GEMINI_API_KEY e o modelo '" + model + "' em Configuracoes > Chaves de API."
+    };
+  }
+
+  var payload;
+  try {
+    payload = JSON.parse(res.body);
+  } catch (e) {
+    return { success: false, error: "Resposta da pesquisa nao veio em JSON valido." };
+  }
+
+  var candidate = payload && payload.candidates && payload.candidates[0];
+  if (!candidate) {
+    var apiErr = payload && payload.error && payload.error.message;
+    return { success: false, error: apiErr ? ("API de pesquisa: " + apiErr) : "A pesquisa nao retornou resultados." };
+  }
+
+  var answer = ((candidate.content && candidate.content.parts) || [])
+    .map(function (part) { return part.text || ""; })
+    .join("")
+    .trim();
+
+  var sources = [];
+  var grounding = candidate.groundingMetadata;
+  if (grounding && Array.isArray(grounding.groundingChunks)) {
+    grounding.groundingChunks.forEach(function (chunk) {
+      if (chunk && chunk.web && chunk.web.uri) {
+        sources.push({ title: chunk.web.title || chunk.web.uri, url: chunk.web.uri });
+      }
+    });
+  }
+
+  return {
+    success: true,
+    query: query,
+    model: model,
+    answer: answer || "(sem texto na resposta)",
+    sources: sources,
+    note: "Cite as fontes ao usar esta resposta. Se precisar de detalhe alem do resumo, abra a fonte com web_extract."
+  };
+}
+
+// ===== EXTERNAL TOOLS =====
+
+var PLACES_LIST_FIELDS = [
+  "places.id", "places.displayName", "places.formattedAddress", "places.rating",
+  "places.userRatingCount", "places.priceLevel", "places.currentOpeningHours.openNow",
+  "places.googleMapsUri", "places.websiteUri", "places.nationalPhoneNumber", "places.location"
+].join(",");
+
+var PLACES_DETAIL_FIELDS = [
+  "id", "displayName", "formattedAddress", "rating", "userRatingCount", "priceLevel",
+  "currentOpeningHours", "googleMapsUri", "websiteUri", "nationalPhoneNumber",
+  "location", "editorialSummary", "reviews"
+].join(",");
+
+function simplifyPlace(place) {
+  if (!place) return null;
+  return {
+    id: place.id,
+    name: place.displayName && place.displayName.text ? place.displayName.text : undefined,
+    address: place.formattedAddress,
+    rating: place.rating,
+    reviews: place.userRatingCount,
+    priceLevel: place.priceLevel,
+    openNow: place.currentOpeningHours ? place.currentOpeningHours.openNow : undefined,
+    phone: place.nationalPhoneNumber,
+    website: place.websiteUri,
+    mapsUrl: place.googleMapsUri,
+    location: place.location
+  };
+}
+
+// Google Places API (New). Requer a chave do próprio usuário; sem ela a tool
+// nem chega a ser oferecida ao modelo (ver getActiveTools).
+async function executeMapsPlaces(args) {
+  var command = String(args && args.command ? args.command : "").trim();
+  var maxResults = parseInt(args.max_results, 10);
+  if (!isFinite(maxResults) || maxResults <= 0) maxResults = 10;
+  maxResults = Math.min(maxResults, 20);
+
+  var request;
+
+  if (command === "search_text") {
+    var query = String(args.query || "").trim();
+    if (!query) return { success: false, error: "search_text exige 'query'. Ex: 'pizzaria em Copacabana'." };
+    request = {
+      url: "https://places.googleapis.com/v1/places:searchText",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": "{{KEY:GOOGLE_PLACES_API_KEY}}",
+        "X-Goog-FieldMask": PLACES_LIST_FIELDS
+      },
+      body: JSON.stringify({ textQuery: query, maxResultCount: maxResults, languageCode: "pt-BR" })
+    };
+  } else if (command === "search_nearby") {
+    var lat = Number(args.latitude);
+    var lng = Number(args.longitude);
+    if (!isFinite(lat) || !isFinite(lng)) {
+      return { success: false, error: "search_nearby exige 'latitude' e 'longitude' numericas. Descubra as coordenadas primeiro (search_text ou Nominatim)." };
+    }
+    var radius = Number(args.radius);
+    if (!isFinite(radius) || radius <= 0) radius = 1500;
+    radius = Math.min(radius, 50000);
+
+    var body = {
+      maxResultCount: maxResults,
+      languageCode: "pt-BR",
+      locationRestriction: { circle: { center: { latitude: lat, longitude: lng }, radius: radius } }
+    };
+    if (args.included_type) body.includedTypes = [String(args.included_type)];
+
+    request = {
+      url: "https://places.googleapis.com/v1/places:searchNearby",
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Goog-Api-Key": "{{KEY:GOOGLE_PLACES_API_KEY}}",
+        "X-Goog-FieldMask": PLACES_LIST_FIELDS
+      },
+      body: JSON.stringify(body)
+    };
+  } else if (command === "details") {
+    var placeId = String(args.place_id || "").trim();
+    if (!placeId) return { success: false, error: "details exige 'place_id' (campo 'id' de um resultado de busca)." };
+    request = {
+      url: "https://places.googleapis.com/v1/places/" + encodeURIComponent(placeId),
+      method: "GET",
+      headers: {
+        "X-Goog-Api-Key": "{{KEY:GOOGLE_PLACES_API_KEY}}",
+        "X-Goog-FieldMask": PLACES_DETAIL_FIELDS
+      }
+    };
+  } else {
+    return { success: false, error: "Comando invalido. Use search_text, search_nearby ou details." };
+  }
+
+  var res = await executeHttpRequest(request);
+
+  var payload = null;
+  if (typeof res.body === "string" && res.body) {
+    try { payload = JSON.parse(res.body); } catch (e) { payload = null; }
+  }
+
+  if (!res.success) {
+    var apiMessage = payload && payload.error && payload.error.message ? payload.error.message : (res.error || "erro desconhecido");
+    return {
+      success: false,
+      error: "Google Places (" + (res.status || "sem resposta") + "): " + apiMessage +
+             " Confira se a chave GOOGLE_PLACES_API_KEY e valida e se a \"Places API (New)\" esta ativada no projeto."
+    };
+  }
+  if (!payload) return { success: false, error: "Resposta do Google Places nao veio em JSON valido." };
+
+  if (command === "details") {
+    return { success: true, command: command, place: simplifyPlace(payload) };
+  }
+
+  var places = Array.isArray(payload.places) ? payload.places.map(simplifyPlace) : [];
+  return {
+    success: true,
+    command: command,
+    count: places.length,
+    places: places,
+    note: places.length ? undefined : "Nenhum lugar encontrado. Tente outro termo ou aumente o raio."
+  };
+}
+
+function sendDebuggerAction(args) {
+  return new Promise(function (resolve) {
+    chrome.runtime.sendMessage({ action: "debugger_action", payload: args }, function (response) {
+      if (chrome.runtime.lastError) {
+        resolve({ success: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      if (!response) {
+        resolve({ success: false, error: "O serviço de automação não respondeu. Tente a ação novamente." });
+        return;
+      }
+      resolve(response);
+    });
+  });
+}
+
+// Executa uma ação no navegador. Se o site ainda não foi aprovado, exibe o
+// widget e AGUARDA a decisão do usuário — a tarefa continua viva o tempo que
+// for preciso — e então repete a ação automaticamente.
+async function runDebuggerActionAwaitingPermission(args) {
+  var response = await sendDebuggerAction(args);
+
+  // Só uma rodada de espera: se depois de aprovar ainda vier "pendente",
+  // devolvemos o erro em vez de entrar em loop de pedidos.
+  if (!response || !response.pending_permission) return response;
+
+  var granted = await waitForUserPermission(response.origin, response.token);
+  if (!granted) {
+    return {
+      success: false,
+      error: "PERMISSAO_NEGADA: o usuario bloqueou o acesso a " + response.origin +
+             ". Nao tente de novo neste site; explique ao usuario e pergunte como prosseguir."
+    };
+  }
+
+  var retry = await sendDebuggerAction(args);
+  if (retry && retry.pending_permission) {
+    return { success: false, error: "A permissao para " + response.origin + " nao foi registrada. Peca ao usuario para aprovar novamente." };
+  }
+  return retry;
+}
+
+// Pergunta ao background se o site da aba ativa já foi aprovado. Se não, abre
+// o pedido e espera a decisão do usuário — mesma regra das ações do Debugger.
+async function ensureSitePermission() {
+  var res = await new Promise(function (resolve) {
+    chrome.runtime.sendMessage({ type: "request_site_permission" }, function (response) {
+      if (chrome.runtime.lastError) {
+        resolve({ success: false, error: chrome.runtime.lastError.message });
+        return;
+      }
+      resolve(response);
+    });
+  });
+
+  if (!res || !res.success) {
+    return { ok: false, error: (res && res.error) || "Nao foi possivel verificar a permissao do site." };
+  }
+  if (res.allowed) return { ok: true };
+
+  var granted = await waitForUserPermission(res.origin, res.token);
+  if (!granted) {
+    return {
+      ok: false,
+      error: "PERMISSAO_NEGADA: o usuario bloqueou o acesso a " + res.origin +
+             ". Nao tente de novo neste site; explique ao usuario e pergunte como prosseguir."
+    };
+  }
+  return { ok: true };
+}
+
+// Caminho legado via content script (read_dom, scroll, navigate, search_web...).
+function runContentScriptCommand(args) {
+  return new Promise(function (resolve) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!tabs[0]) {
+        resolve({ success: false, error: "No active tab" });
+        return;
+      }
+      chrome.tabs.sendMessage(tabs[0].id, { action: "dom_action", payload: args }, (response) => {
+        if (chrome.runtime.lastError) {
+          const errMsg = chrome.runtime.lastError.message;
+          if (errMsg.includes("Receiving end does not exist")) {
+             resolve({ success: false, error: "A aba atual está bloqueada ou precisa ser atualizada. Por favor, peça ao usuário para ABRIR UMA NOVA ABA e navegar para um site (ex: google.com) antes de pesquisar ou interagir." });
+          } else {
+             resolve({ success: false, error: errMsg });
+          }
+          return;
+        }
+        if (!response) {
+          resolve({ success: false, error: "A página não respondeu ao comando. Recarregue a aba e tente novamente." });
+          return;
+        }
+        if (args.command === "get_page_source") {
+          // O content script já corta o código-fonte no seu próprio limite e
+          // sinaliza `truncated`. Aplicar a poda genérica aqui destruiria o
+          // HTML/CSS que o modelo precisa para reproduzir o site.
+          resolve(response);
+          return;
+        }
+        // Truncar resultados muito grandes para não estourar o contexto do LLM
+        let resultStr = JSON.stringify(response);
+        if (resultStr.length > 20000) {
+          response.data = {
+             warning: "O DOM era muito grande e foi truncado.",
+             content: resultStr.substring(0, 20000) + "... [TRUNCADO]"
+          };
+        }
+        resolve(response);
+      });
+    });
+  });
 }
 
 function executeToolInBrowser(name, args) {
@@ -1682,45 +2634,27 @@ function executeToolInBrowser(name, args) {
         return;
       }
 
-      // Comandos que usam a nova API Debugger
-      if (["get_accessibility_tree", "simulate_click", "simulate_type", "press_key"].includes(args.command)) {
-        chrome.runtime.sendMessage({ action: "debugger_action", payload: args }, (response) => {
-          if (chrome.runtime.lastError) {
-             resolve({ success: false, error: chrome.runtime.lastError.message });
-          } else {
-             resolve(response);
+      // Ler o código-fonte completo é uma leitura sensível: passa pelo mesmo
+      // controle de permissão das ações do Debugger antes de chegar à página.
+      if (args.command === "get_page_source") {
+        ensureSitePermission().then(function (perm) {
+          if (!perm.ok) {
+            resolve({ success: false, error: perm.error });
+            return;
           }
+          runContentScriptCommand(args).then(resolve);
         });
         return;
       }
-      
+
+      // Comandos que usam a nova API Debugger
+      if (["get_accessibility_tree", "simulate_click", "simulate_type", "press_key"].includes(args.command)) {
+        runDebuggerActionAwaitingPermission(args).then(resolve);
+        return;
+      }
+
       // Comandos legados do Content Script
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        if (!tabs[0]) {
-          resolve({ success: false, error: "No active tab" });
-          return;
-        }
-        chrome.tabs.sendMessage(tabs[0].id, { action: "dom_action", payload: args }, (response) => {
-          if (chrome.runtime.lastError) {
-            const errMsg = chrome.runtime.lastError.message;
-            if (errMsg.includes("Receiving end does not exist")) {
-               resolve({ success: false, error: "A aba atual está bloqueada ou precisa ser atualizada. Por favor, peça ao usuário para ABRIR UMA NOVA ABA e navegar para um site (ex: google.com) antes de pesquisar ou interagir." });
-            } else {
-               resolve({ success: false, error: errMsg });
-            }
-          } else {
-            // Truncar resultados muito grandes para não estourar o contexto do LLM
-            let resultStr = JSON.stringify(response);
-            if (resultStr.length > 20000) {
-              response.data = {
-                 warning: "O DOM era muito grande e foi truncado.",
-                 content: resultStr.substring(0, 20000) + "... [TRUNCADO]"
-              };
-            }
-            resolve(response);
-          }
-        });
-      });
+      runContentScriptCommand(args).then(resolve);
     } else if (name === "capture_screenshot") {
       chrome.tabs.captureVisibleTab(null, { format: "png" }, (dataUrl) => {
         if (chrome.runtime.lastError) {
@@ -1737,7 +2671,7 @@ function executeToolInBrowser(name, args) {
         resolve({ success: false, error: "Conteudo Markdown vazio." });
         return;
       }
-      var blob = new Blob([content], { type: "text/markdown;charset=utf-8" });
+      var blob = new Blob([content], { type: fileMimeForExt() });
       var url = URL.createObjectURL(blob);
       chrome.downloads.download({
         url: url,
@@ -1751,6 +2685,46 @@ function executeToolInBrowser(name, args) {
         }
         setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
       });
+    } else if (name === "write_file") {
+      var safeName = sanitizeAnyFilename(args.filename);
+      if (!safeName) {
+        resolve({ success: false, error: "Nome de arquivo invalido. Envie algo como 'index.html' ou 'meu_site/style.css'." });
+        return;
+      }
+      var fileContent = typeof args.content === "string" ? args.content : "";
+      if (!fileContent) {
+        resolve({ success: false, error: "Conteudo vazio: envie o conteudo completo do arquivo em 'content'." });
+        return;
+      }
+
+      var fileBlob = new Blob([fileContent], { type: mimeForFilename(safeName) });
+      var fileUrl = URL.createObjectURL(fileBlob);
+      chrome.downloads.download({
+        url: fileUrl,
+        filename: safeName,
+        saveAs: false,
+        conflictAction: "uniquify"
+      }, function (downloadId) {
+        if (chrome.runtime.lastError) {
+          resolve({ success: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve({
+            success: true,
+            message: "Arquivo salvo em Downloads/" + safeName + " (" + fileContent.length + " caracteres)",
+            filename: safeName,
+            downloadId: downloadId
+          });
+        }
+        setTimeout(function () { URL.revokeObjectURL(fileUrl); }, 1000);
+      });
+    } else if (name === "http_request") {
+      executeHttpRequest(args).then(resolve);
+    } else if (name === "web_extract") {
+      executeWebExtract(args).then(resolve);
+    } else if (name === "web_search") {
+      executeWebSearch(args).then(resolve);
+    } else if (name === "maps_places") {
+      executeMapsPlaces(args).then(resolve);
     } else if (name === "tab_manager") {
       if (args.command === "create_tab") {
         chrome.tabs.create({ url: args.url, active: true }, function(tab) {
@@ -1786,6 +2760,909 @@ function executeToolInBrowser(name, args) {
     } else {
       resolve({ success: false, error: "Unknown tool: " + name });
     }
+  });
+}
+
+// ========== MODOS DE OPERAÇÃO (PLANO / NORMAL / AUTÔNOMO) ==========
+function getAurexMode() {
+  var m = localStorage.getItem('aurex_mode') || 'plan';
+  return ['plan', 'normal', 'autonomous'].includes(m) ? m : 'plan';
+}
+
+function setAurexMode(mode) {
+  if (!['plan', 'normal', 'autonomous'].includes(mode)) mode = 'plan';
+  localStorage.setItem('aurex_mode', mode);
+  // O background lê este valor para auto-conceder permissões no modo autônomo
+  try { chrome.storage.local.set({ aurex_mode: mode }); } catch (e) { /* ignore */ }
+}
+
+// Diretiva injetada no system prompt conforme o modo. O SYSTEM_PROMPT base já
+// contém a regra do "PLANO DE ACAO OBRIGATORIO"; nos outros modos sobrescrevemos.
+function getModeDirective() {
+  var mode = getAurexMode();
+  if (mode === 'normal') {
+    return "\n\n# MODO DE OPERAÇÃO: NORMAL\nIMPORTANTE: NESTE MODO, IGNORE a regra do 'PLANO DE ACAO OBRIGATORIO'. NÃO mostre widget de plano nem peça aprovação para começar. Execute a tarefa diretamente, agindo passo a passo. Ainda assim, respeite os pedidos de permissão por site e confirme antes de ações destrutivas ou irreversíveis (ex: enviar formulários sensíveis, apagar dados).";
+  }
+  if (mode === 'autonomous') {
+    return "\n\n# MODO DE OPERAÇÃO: AUTÔNOMO\nIMPORTANTE: NESTE MODO, IGNORE a regra do 'PLANO DE ACAO OBRIGATORIO'. NÃO mostre widget de plano e NÃO peça aprovação ao usuário. Execute a tarefa inteira de ponta a ponta de forma autônoma, tomando decisões por conta própria até concluir. Só pare se for absolutamente impossível continuar.";
+  }
+  // plan: comportamento padrão já está no SYSTEM_PROMPT base
+  return "\n\n# MODO DE OPERAÇÃO: PLANO\nSiga a regra do 'PLANO DE ACAO OBRIGATORIO': sempre apresente um plano e aguarde aprovação antes de executar tarefas de múltiplos passos.";
+}
+
+function setupModeSelector() {
+  var btn = document.getElementById('mode-selector-btn');
+  var menu = document.getElementById('mode-menu');
+  var label = document.getElementById('mode-current-label');
+  if (!btn || !menu) return;
+
+  function refreshActive() {
+    var mode = getAurexMode();
+    if (label) label.textContent = t('mode.' + mode);
+    menu.querySelectorAll('.mode-option').forEach(function (opt) {
+      opt.classList.toggle('active', opt.getAttribute('data-mode') === mode);
+    });
+  }
+
+  // Garante que o background conheça o modo atual no boot
+  setAurexMode(getAurexMode());
+  refreshActive();
+
+  btn.addEventListener('click', function (e) {
+    e.stopPropagation();
+    menu.classList.toggle('hidden');
+  });
+
+  menu.querySelectorAll('.mode-option').forEach(function (opt) {
+    opt.addEventListener('click', function () {
+      setAurexMode(opt.getAttribute('data-mode'));
+      refreshActive();
+      menu.classList.add('hidden');
+    });
+  });
+
+  document.addEventListener('click', function () { menu.classList.add('hidden'); });
+}
+
+// ========== LOGIN / LOGOUT ==========
+function openLoginPage() {
+  try {
+    chrome.tabs.create({ url: chrome.runtime.getURL('login.html') });
+  } catch (e) {
+    window.open('login.html', '_blank');
+  }
+}
+
+// ========== NOTIFICAÇÕES ==========
+function showAurexNotification(title, message) {
+  if (!chrome.notifications || !chrome.notifications.create) return;
+  try {
+    chrome.notifications.create('aurex_' + Date.now(), {
+      type: 'basic',
+      iconUrl: chrome.runtime.getURL('icon128.png'),
+      title: title || 'Aurex',
+      message: message || '',
+      priority: 2
+    }, function () { void chrome.runtime.lastError; });
+  } catch (e) { /* ignore */ }
+}
+
+function notifyTaskComplete(message) {
+  if (localStorage.getItem('aurex_notify') !== 'true') return;
+  showAurexNotification('Aurex', message || 'Sua tarefa foi concluída.');
+}
+
+// ========== PAINEL DE CONFIGURAÇÕES ==========
+function setupSettingsPanel() {
+  var panel = document.getElementById('settings-panel');
+  var openBtn = document.getElementById('open-settings');
+  var closeBtn = document.getElementById('close-settings');
+  if (openBtn && panel) {
+    openBtn.addEventListener('click', function () {
+      panel.classList.remove('hidden');
+      renderApprovedSites();
+      renderIntegrations();
+      renderApiKeys();
+      renderShortcutsList();
+      var sidebar = document.getElementById('sidebar');
+      if (sidebar) sidebar.classList.add('hidden');
+    });
+  }
+  if (closeBtn && panel) closeBtn.addEventListener('click', function () { panel.classList.add('hidden'); });
+
+  // Tabs internas
+  document.querySelectorAll('.settings-tab').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      var target = tab.getAttribute('data-settings-tab');
+      document.querySelectorAll('.settings-tab').forEach(function (t2) { t2.classList.remove('active'); });
+      tab.classList.add('active');
+      document.querySelectorAll('.settings-section').forEach(function (sec) { sec.classList.remove('active'); });
+      var sec = document.getElementById('settings-' + target);
+      if (sec) sec.classList.add('active');
+    });
+  });
+
+  // Idioma
+  var langSelect = document.getElementById('language-select');
+  if (langSelect) {
+    langSelect.innerHTML = '';
+    Object.keys(AUREX_LANGUAGES).forEach(function (code) {
+      var opt = document.createElement('option');
+      opt.value = code;
+      opt.textContent = AUREX_LANGUAGES[code];
+      langSelect.appendChild(opt);
+    });
+    langSelect.value = getAurexLang();
+    langSelect.addEventListener('change', function () {
+      applyLanguage(langSelect.value);
+      // Re-renderiza partes dinâmicas dependentes de idioma
+      var modeLabel = document.getElementById('mode-current-label');
+      if (modeLabel) modeLabel.textContent = t('mode.' + getAurexMode());
+      renderApprovedSites();
+      renderIntegrations();
+      renderApiKeys();
+      renderShortcutsList();
+      setDynamicGreeting();
+    });
+  }
+
+  // Notificações
+  var notifToggle = document.getElementById('toggle-notifications');
+  if (notifToggle) {
+    notifToggle.checked = localStorage.getItem('aurex_notify') === 'true';
+    notifToggle.addEventListener('change', function () {
+      localStorage.setItem('aurex_notify', notifToggle.checked ? 'true' : 'false');
+      // Confirmação imediata para o usuário verificar que funciona de verdade
+      if (notifToggle.checked) {
+        showAurexNotification('Aurex', 'Notificações ativadas. Você será avisado quando as tarefas terminarem.');
+      }
+    });
+  }
+
+  // Microfone
+  var micToggle = document.getElementById('toggle-microphone');
+  if (micToggle) {
+    micToggle.checked = localStorage.getItem('aurex_mic') === 'true';
+    micToggle.addEventListener('change', function () {
+      if (micToggle.checked) {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+          navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(function (stream) {
+              stream.getTracks().forEach(function (track) { track.stop(); });
+              localStorage.setItem('aurex_mic', 'true');
+            })
+            .catch(function () {
+              micToggle.checked = false;
+              localStorage.setItem('aurex_mic', 'false');
+            });
+        } else {
+          localStorage.setItem('aurex_mic', 'true');
+        }
+      } else {
+        localStorage.setItem('aurex_mic', 'false');
+      }
+    });
+  }
+
+  // Personalidade
+  var persInput = document.getElementById('personality-input');
+  var persSave = document.getElementById('save-personality');
+  if (persInput) persInput.value = localStorage.getItem('aurex_personality') || '';
+  if (persSave && persInput) {
+    persSave.addEventListener('click', function () {
+      localStorage.setItem('aurex_personality', persInput.value.trim());
+      persSave.textContent = '✓';
+      setTimeout(function () { persSave.textContent = t('common.save'); }, 1200);
+    });
+  }
+
+  // Servidor / conexão
+  var serverUrlInput = document.getElementById('server-url-input');
+  var loginToggle = document.getElementById('toggle-use-login');
+  var apiKeyInput = document.getElementById('api-key-input');
+  var saveServer = document.getElementById('save-server');
+  if (serverUrlInput) serverUrlInput.value = localStorage.getItem('aurex_api_base_url') || '';
+  if (loginToggle) loginToggle.checked = isLoginRequired();
+  if (apiKeyInput) apiKeyInput.value = localStorage.getItem('aurex_api_key') || '';
+  if (saveServer) {
+    saveServer.addEventListener('click', function () {
+      var url = (serverUrlInput ? serverUrlInput.value : '').trim().replace(/\/+$/, '');
+      if (url) localStorage.setItem('aurex_api_base_url', url); else localStorage.removeItem('aurex_api_base_url');
+      localStorage.setItem('aurex_use_login', (loginToggle && loginToggle.checked) ? 'true' : 'false');
+      var key = (apiKeyInput ? apiKeyInput.value : '').trim();
+      if (key) localStorage.setItem('aurex_api_key', key); else localStorage.removeItem('aurex_api_key');
+      saveServer.textContent = '✓';
+      setTimeout(function () { saveServer.textContent = t('settings.server.save'); }, 1200);
+    });
+  }
+
+  // Formato de arquivo
+  var fileSelect = document.getElementById('file-format-select');
+  if (fileSelect) {
+    fileSelect.value = localStorage.getItem('aurex_file_ext') || 'md';
+    fileSelect.addEventListener('change', function () {
+      localStorage.setItem('aurex_file_ext', fileSelect.value);
+    });
+  }
+
+  // Atalho de teclado -> abre a página nativa do Chrome
+  var configShortcut = document.getElementById('configure-shortcut');
+  if (configShortcut) {
+    configShortcut.addEventListener('click', function () {
+      try { chrome.tabs.create({ url: 'chrome://extensions/shortcuts' }); } catch (e) { /* ignore */ }
+    });
+  }
+  // Mostra o atalho atual configurado (se houver)
+  try {
+    if (chrome.commands && chrome.commands.getAll) {
+      chrome.commands.getAll(function (cmds) {
+        var openCmd = (cmds || []).find(function (c) { return c.name === '_execute_action'; });
+        var cur = document.getElementById('keyboard-current');
+        if (cur && openCmd && openCmd.shortcut) cur.textContent = openCmd.shortcut;
+      });
+    }
+  } catch (e) { /* ignore */ }
+
+  // Conta: conectar / sair / status (usa o login real OAuth/PKCE do aurex-api)
+  var loginBtn = document.getElementById('btn-login');
+  var logoutBtn = document.getElementById('btn-logout');
+  if (loginBtn) {
+    loginBtn.addEventListener('click', function () {
+      renderAccountStatus(t('account.connecting'));
+      loginAurexChrome()
+        .then(function () { renderAccountStatus(); })
+        .catch(function (err) { renderAccountStatus(t('account.loginFailed') + (err && err.message ? err.message : '')); });
+    });
+  }
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', function () {
+      logoutAurexChrome().catch(function () {}).then(function () { renderAccountStatus(t('account.logoutDone')); });
+    });
+  }
+  renderAccountStatus();
+
+  // Atalhos (shortcuts) personalizados
+  setupShortcutsManager();
+}
+
+function toggleAccountButtons(loggedIn) {
+  var loginBtn = document.getElementById('btn-login');
+  var logoutBtn = document.getElementById('btn-logout');
+  if (loginBtn) loginBtn.style.display = loggedIn ? 'none' : 'inline-flex';
+  if (logoutBtn) logoutBtn.style.display = loggedIn ? 'inline-flex' : 'none';
+}
+
+// Mostra o estado da conta (conectado como X / não conectado). Passe um texto
+// transitório (ex: "Abrindo login...") para feedback imediato.
+function renderAccountStatus(transient) {
+  var el = document.getElementById('account-status');
+  if (!el) return;
+  storageGet(AUREX_AUTH_STORAGE_KEY).then(function (tokens) {
+    var loggedIn = !!(tokens && tokens.accessToken);
+    toggleAccountButtons(loggedIn);
+    if (transient) { el.textContent = transient; return; }
+    if (loggedIn) {
+      var who = (tokens.user && (tokens.user.name || tokens.user.email)) || 'Aurex';
+      el.innerHTML = '<i class="fa-solid fa-circle-check account-ok"></i> ' +
+        escapeHtml(t('account.loggedInAs')) + ' <strong>' + escapeHtml(who) + '</strong>';
+    } else {
+      el.textContent = t('account.loggedOut');
+    }
+  });
+}
+
+// Mostra a chave sempre mascarada: o valor cheio nunca precisa aparecer na
+// tela depois de salvo.
+function maskApiKey(value) {
+  var str = String(value == null ? '' : value);
+  if (str.length <= 4) return '••••';
+  return '••••' + str.slice(-4);
+}
+
+function saveStoredApiKeys(keys) {
+  localStorage.setItem('aurex_api_keys', JSON.stringify(keys));
+}
+
+// Integrações conhecidas: cada uma vira um bloco com campo de chave, estado e
+// (quando houver) o modelo usado. Nenhuma chave acompanha o produto — o que
+// não estiver configurado aqui simplesmente não é oferecido ao modelo.
+function renderIntegrations() {
+  var container = document.getElementById('integrations-list');
+  if (!container) return;
+
+  var keys = getStoredApiKeys();
+  container.innerHTML = '';
+
+  AUREX_INTEGRATIONS.forEach(function (integration) {
+    var configured = String(keys[integration.key] || '').trim() !== '';
+
+    var block = document.createElement('div');
+    block.className = 'integration-item';
+
+    var head = document.createElement('div');
+    head.className = 'integration-head';
+
+    var title = document.createElement('span');
+    title.className = 'integration-title';
+    title.textContent = integration.label;
+
+    var status = document.createElement('span');
+    status.className = 'integration-status ' + (configured ? 'is-on' : 'is-off');
+    status.textContent = configured
+      ? t('settings.integrations.on') + ' • ' + maskApiKey(keys[integration.key])
+      : t('settings.integrations.off');
+
+    head.appendChild(title);
+    head.appendChild(status);
+    block.appendChild(head);
+
+    var help = document.createElement('div');
+    help.className = 'integration-help';
+    help.textContent = integration.help + ' — ' + t('settings.integrations.unlocks') + ': ' + integration.tools.join(', ');
+    block.appendChild(help);
+
+    var input = document.createElement('input');
+    input.type = 'password';
+    input.className = 'setting-select';
+    input.placeholder = configured ? t('settings.integrations.replacePh') : t('settings.apikeys.valuePh');
+    block.appendChild(input);
+
+    // Campo opcional de modelo (ex: qual modelo Gemini faz a pesquisa)
+    var modelInput = null;
+    if (integration.modelSetting) {
+      modelInput = document.createElement('input');
+      modelInput.type = 'text';
+      modelInput.className = 'setting-select';
+      modelInput.style.marginTop = '6px';
+      modelInput.placeholder = t('settings.integrations.modelPh');
+      modelInput.value = localStorage.getItem(integration.modelSetting.storageKey) || integration.modelSetting.defaultValue;
+      block.appendChild(modelInput);
+    }
+
+    var actions = document.createElement('div');
+    actions.className = 'integration-actions';
+
+    var saveBtn = document.createElement('button');
+    saveBtn.className = 'action-btn primary';
+    saveBtn.textContent = t('common.save');
+    saveBtn.addEventListener('click', function () {
+      var current = getStoredApiKeys();
+      var typed = input.value.trim();
+
+      if (modelInput) {
+        var modelValue = modelInput.value.trim() || integration.modelSetting.defaultValue;
+        localStorage.setItem(integration.modelSetting.storageKey, modelValue);
+      }
+
+      // Campo vazio com chave já salva = o usuário só mudou o modelo.
+      if (!typed && !String(current[integration.key] || '').trim()) {
+        saveBtn.textContent = t('settings.apikeys.emptyValue');
+        setTimeout(function () { renderIntegrations(); }, 1600);
+        return;
+      }
+      if (typed) current[integration.key] = typed;
+
+      saveStoredApiKeys(current);
+      renderIntegrations();
+      renderApiKeys();
+    });
+
+    actions.appendChild(saveBtn);
+
+    if (configured) {
+      var removeBtn = document.createElement('button');
+      removeBtn.className = 'action-btn danger';
+      removeBtn.textContent = t('settings.apikeys.remove');
+      removeBtn.addEventListener('click', function () {
+        var current = getStoredApiKeys();
+        delete current[integration.key];
+        saveStoredApiKeys(current);
+        renderIntegrations();
+        renderApiKeys();
+      });
+      actions.appendChild(removeBtn);
+    }
+
+    block.appendChild(actions);
+    container.appendChild(block);
+  });
+}
+
+function renderApiKeys() {
+  var list = document.getElementById('api-keys-list');
+  if (!list) return;
+
+  var keys = getStoredApiKeys();
+  var names = Object.keys(keys);
+  list.innerHTML = '';
+
+  if (!names.length) {
+    list.innerHTML = '<div class="approved-sites-empty">' + escapeHtml(t('settings.apikeys.empty')) + '</div>';
+    return;
+  }
+
+  names.forEach(function (name) {
+    var item = document.createElement('div');
+    item.className = 'approved-site-item';
+
+    var span = document.createElement('span');
+    span.textContent = name + '  ' + maskApiKey(keys[name]);
+
+    var btn = document.createElement('button');
+    btn.className = 'action-btn danger';
+    btn.textContent = t('settings.apikeys.remove');
+    btn.addEventListener('click', function () {
+      var current = getStoredApiKeys();
+      delete current[name];
+      saveStoredApiKeys(current);
+      renderApiKeys();
+    });
+
+    item.appendChild(span);
+    item.appendChild(btn);
+    list.appendChild(item);
+  });
+}
+
+function setupApiKeysUI() {
+  var addBtn = document.getElementById('add-api-key');
+  var nameInput = document.getElementById('api-key-name');
+  var valueInput = document.getElementById('api-key-value');
+  if (!addBtn || !nameInput || !valueInput) return;
+
+  addBtn.addEventListener('click', function () {
+    var name = nameInput.value.trim();
+    var value = valueInput.value.trim();
+
+    // O nome vira o placeholder {{KEY:NOME}}, então precisa casar com o regex
+    // de substituição — senão a chave nunca seria aplicada.
+    if (!/^[A-Za-z0-9_.-]+$/.test(name)) {
+      addBtn.textContent = t('settings.apikeys.invalidName');
+      setTimeout(function () { renderAddKeyButtonLabel(addBtn); }, 1800);
+      return;
+    }
+    if (!value) {
+      addBtn.textContent = t('settings.apikeys.emptyValue');
+      setTimeout(function () { renderAddKeyButtonLabel(addBtn); }, 1800);
+      return;
+    }
+
+    var keys = getStoredApiKeys();
+    keys[name] = value;
+    saveStoredApiKeys(keys);
+
+    nameInput.value = '';
+    valueInput.value = '';
+    renderApiKeys();
+
+    addBtn.textContent = t('settings.apikeys.saved');
+    setTimeout(function () { renderAddKeyButtonLabel(addBtn); }, 1200);
+  });
+
+  renderIntegrations();
+  renderApiKeys();
+}
+
+function renderAddKeyButtonLabel(btn) {
+  btn.innerHTML = '<i class="fa-solid fa-plus"></i> <span data-i18n="settings.apikeys.add">' + escapeHtml(t('settings.apikeys.add')) + '</span>';
+}
+
+function renderApprovedSites() {
+  var list = document.getElementById('approved-sites-list');
+  if (!list) return;
+  if (!chrome.storage || !chrome.storage.session) {
+    list.innerHTML = '<div class="approved-sites-empty">' + escapeHtml(t('settings.sites.empty')) + '</div>';
+    return;
+  }
+  chrome.storage.session.get(['aurex_allowed_origins'], function (result) {
+    var origins = (result && result.aurex_allowed_origins) || [];
+    list.innerHTML = '';
+    if (origins.length === 0) {
+      list.innerHTML = '<div class="approved-sites-empty">' + escapeHtml(t('settings.sites.empty')) + '</div>';
+      return;
+    }
+    origins.forEach(function (origin) {
+      var item = document.createElement('div');
+      item.className = 'approved-site-item';
+      var span = document.createElement('span');
+      span.textContent = origin;
+      var btn = document.createElement('button');
+      btn.className = 'action-btn danger';
+      btn.textContent = t('settings.sites.revoke');
+      btn.addEventListener('click', function () {
+        chrome.runtime.sendMessage({ type: 'revoke_permission', origin: origin }, function () {
+          void chrome.runtime.lastError;
+          renderApprovedSites();
+        });
+      });
+      item.appendChild(span);
+      item.appendChild(btn);
+      list.appendChild(item);
+    });
+  });
+}
+
+// ========== ATALHOS PERSONALIZADOS (SHORTCUTS) ==========
+function getUserShortcuts() {
+  try { return JSON.parse(localStorage.getItem('aurex_shortcuts')) || []; }
+  catch (e) { return []; }
+}
+function saveUserShortcuts(list) {
+  localStorage.setItem('aurex_shortcuts', JSON.stringify(list));
+}
+
+function setupShortcutsManager() {
+  var btnCreate = document.getElementById('btn-create-shortcut');
+  var form = document.getElementById('create-shortcut-form');
+  var save = document.getElementById('save-shortcut');
+  var cancel = document.getElementById('cancel-shortcut');
+  if (btnCreate && form) {
+    btnCreate.addEventListener('click', function () { form.classList.remove('hidden'); });
+  }
+  if (cancel && form) {
+    cancel.addEventListener('click', function () {
+      form.classList.add('hidden');
+      document.getElementById('shortcut-name').value = '';
+      document.getElementById('shortcut-prompt').value = '';
+    });
+  }
+  if (save) {
+    save.addEventListener('click', function () {
+      var nameEl = document.getElementById('shortcut-name');
+      var promptEl = document.getElementById('shortcut-prompt');
+      var name = (nameEl.value || '').trim().replace(/^\/+/, '').replace(/\s+/g, '_').toLowerCase();
+      var prompt = (promptEl.value || '').trim();
+      if (!name || !prompt) return;
+      var list = getUserShortcuts();
+      list.push({ name: name, prompt: prompt });
+      saveUserShortcuts(list);
+      nameEl.value = '';
+      promptEl.value = '';
+      if (form) form.classList.add('hidden');
+      renderShortcutsList();
+    });
+  }
+  renderShortcutsList();
+}
+
+function renderShortcutsList() {
+  var list = document.getElementById('shortcuts-list');
+  if (!list) return;
+  var shortcuts = getUserShortcuts();
+  list.innerHTML = '';
+  if (shortcuts.length === 0) {
+    list.innerHTML = '<div class="approved-sites-empty">' + escapeHtml(t('settings.shortcuts.empty')) + '</div>';
+    return;
+  }
+  shortcuts.forEach(function (sc, idx) {
+    var item = document.createElement('div');
+    item.className = 'shortcut-item';
+    var left = document.createElement('div');
+    left.innerHTML = '<div class="shortcut-item-name">/' + escapeHtml(sc.name) + '</div>' +
+      '<div class="shortcut-item-prompt">' + escapeHtml(sc.prompt) + '</div>';
+    var del = document.createElement('button');
+    del.className = 'icon-btn';
+    del.innerHTML = '<i class="fa-solid fa-trash"></i>';
+    del.addEventListener('click', function () {
+      var arr = getUserShortcuts();
+      arr.splice(idx, 1);
+      saveUserShortcuts(arr);
+      renderShortcutsList();
+    });
+    item.appendChild(left);
+    item.appendChild(del);
+    list.appendChild(item);
+  });
+}
+
+// ========== MENU DE ATALHOS NO CHAT (digite /) ==========
+var _slashTargetInput = null;
+
+function getSlashCommands() {
+  var cmds = [
+    { cmd: 'compact', icon: 'fa-broom', desc: t('slash.compact'), builtin: true },
+    { cmd: 'atalhos', icon: 'fa-bolt', desc: t('slash.shortcuts'), builtin: true }
+  ];
+  getUserShortcuts().forEach(function (sc) {
+    cmds.push({ cmd: sc.name, icon: 'fa-play', desc: sc.prompt, builtin: false, prompt: sc.prompt });
+  });
+  return cmds;
+}
+
+function maybeShowSlashMenu(input) {
+  var menu = document.getElementById('slash-menu');
+  if (!menu) return;
+  var val = input.value;
+  if (val.charAt(0) !== '/' || val.indexOf(' ') !== -1) {
+    menu.classList.add('hidden');
+    return;
+  }
+  _slashTargetInput = input;
+  var query = val.slice(1).toLowerCase();
+  var matches = getSlashCommands().filter(function (c) { return c.cmd.toLowerCase().indexOf(query) === 0; });
+  if (matches.length === 0) { menu.classList.add('hidden'); return; }
+
+  menu.innerHTML = '';
+  matches.forEach(function (c, i) {
+    var item = document.createElement('div');
+    item.className = 'slash-item' + (i === 0 ? ' active' : '');
+    item.setAttribute('data-cmd', c.cmd);
+    item.innerHTML = '<i class="fa-solid ' + c.icon + '"></i>' +
+      '<span class="slash-item-cmd">/' + escapeHtml(c.cmd) + '</span>' +
+      '<span class="slash-item-desc">' + escapeHtml(c.desc || '') + '</span>';
+    item.addEventListener('click', function () { executeSlashCommand(c.cmd); });
+    menu.appendChild(item);
+  });
+
+  // Posiciona acima do input
+  var rect = input.getBoundingClientRect();
+  menu.style.left = rect.left + 'px';
+  menu.style.width = rect.width + 'px';
+  menu.classList.remove('hidden');
+  menu.style.top = (rect.top - menu.offsetHeight - 8) + 'px';
+}
+
+function hideSlashMenu() {
+  var menu = document.getElementById('slash-menu');
+  if (menu) menu.classList.add('hidden');
+}
+
+// Retorna true se consumiu o evento de teclado
+function handleSlashKeydown(e, input) {
+  var menu = document.getElementById('slash-menu');
+  if (!menu || menu.classList.contains('hidden')) return false;
+  var items = Array.prototype.slice.call(menu.querySelectorAll('.slash-item'));
+  if (items.length === 0) return false;
+  var activeIdx = items.findIndex(function (it) { return it.classList.contains('active'); });
+  if (activeIdx < 0) activeIdx = 0;
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    items[activeIdx].classList.remove('active');
+    items[(activeIdx + 1) % items.length].classList.add('active');
+    return true;
+  }
+  if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    items[activeIdx].classList.remove('active');
+    items[(activeIdx - 1 + items.length) % items.length].classList.add('active');
+    return true;
+  }
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    executeSlashCommand(items[activeIdx].getAttribute('data-cmd'));
+    return true;
+  }
+  if (e.key === 'Escape') {
+    hideSlashMenu();
+    return true;
+  }
+  return false;
+}
+
+function executeSlashCommand(cmd) {
+  hideSlashMenu();
+  if (_slashTargetInput) _slashTargetInput.value = '';
+
+  if (cmd === 'compact') {
+    compactChatHistory();
+    return;
+  }
+  if (cmd === 'atalhos') {
+    showSlashShortcutsOptions();
+    return;
+  }
+  // Atalho personalizado
+  var sc = getUserShortcuts().find(function (s) { return s.name === cmd; });
+  if (sc) {
+    switchToChatMode();
+    sendUserMessage(sc.prompt);
+  }
+}
+
+// /compact — condensa o histórico mantendo um resumo
+function compactChatHistory() {
+  var systemMsg = chatHistory[0] && chatHistory[0].role === 'system' ? chatHistory[0] : { role: 'system', content: SYSTEM_PROMPT };
+  // Coleta um resumo simples das mensagens de usuário e assistente
+  var lines = [];
+  chatHistory.forEach(function (m) {
+    if (m.role === 'user' && typeof m.content === 'string') {
+      lines.push('• Usuário: ' + m.content.slice(0, 200));
+    } else if (m.role === 'assistant' && typeof m.content === 'string' && m.content.trim()) {
+      var clean = m.content.replace(/<widget>[\s\S]*?<\/widget>/g, '[widget]').replace(/\s+/g, ' ').trim();
+      if (clean) lines.push('• Aurex: ' + clean.slice(0, 200));
+    }
+  });
+  var summary = lines.length ? lines.join('\n') : 'Sem histórico relevante.';
+  chatHistory = [
+    systemMsg,
+    { role: 'system', content: '# RESUMO DA CONVERSA ANTERIOR (compactado)\n' + summary }
+  ];
+  var mc = document.getElementById('messages-container');
+  if (mc) mc.innerHTML = '';
+  switchToChatMode();
+  appendMessageToUI('assistant', t('slash.compactDone'));
+}
+
+// /atalhos — mostra as duas opções (gravar fluxo / agendar tarefa)
+function showSlashShortcutsOptions() {
+  switchToChatMode();
+  var html = '<widget><div class="plan-widget">' +
+    '<div class="plan-header"><i class="ti ti-bolt text-info"></i><strong>' + escapeHtml(t('slash.shortcuts')) + '</strong></div>' +
+    '<div class="flex-row">' +
+    '<button class="q-submit" data-slash-action="record">' + escapeHtml(t('slash.recordWorkflow')) + '</button>' +
+    '<button class="q-submit q-submit-secondary" data-slash-action="schedule">' + escapeHtml(t('slash.scheduleTask')) + '</button>' +
+    '</div></div></widget>';
+  appendMessageToUI('assistant', html);
+}
+
+// ========== ENSINAR AUREX (Teach) ==========
+var _teachRecording = false;
+var _teachTranscript = '';
+
+function setupTeachPanel() {
+  var panel = document.getElementById('teach-panel');
+  var openBtn = document.getElementById('btn-teach-aurex');
+  var closeBtn = document.getElementById('close-teach');
+  var toggle = document.getElementById('teach-toggle');
+
+  if (openBtn && panel) {
+    openBtn.addEventListener('click', function () { panel.classList.remove('hidden'); });
+  }
+  if (closeBtn && panel) {
+    closeBtn.addEventListener('click', function () {
+      if (_teachRecording) stopTeachRecording();
+      panel.classList.add('hidden');
+    });
+  }
+  if (toggle) {
+    toggle.addEventListener('click', function () {
+      if (_teachRecording) stopTeachRecording();
+      else startTeachRecording();
+    });
+  }
+}
+
+function startTeachRecording() {
+  var statusEl = document.getElementById('teach-status');
+  var transcriptEl = document.getElementById('teach-transcript');
+  var toggle = document.getElementById('teach-toggle');
+  var label = document.getElementById('teach-toggle-label');
+  _teachTranscript = '';
+  if (transcriptEl) transcriptEl.textContent = '';
+
+  // Inicia gravação de fluxo no background
+  chrome.runtime.sendMessage({ type: 'start_recording' }, function () { void chrome.runtime.lastError; });
+  _teachRecording = true;
+  if (toggle) toggle.classList.add('recording');
+  if (label) label.textContent = t('teach.stop');
+  if (statusEl) statusEl.textContent = t('teach.recording');
+
+  // Narração por voz: roda o reconhecimento DENTRO da aba ativa (onde o usuário
+  // está demonstrando), pois a Web Speech API não funciona no side panel.
+  startTabSpeech(
+    function (finalText, interim) {
+      if (finalText) _teachTranscript += finalText;
+      if (transcriptEl) transcriptEl.textContent = (_teachTranscript + (interim || '')).trim();
+    },
+    function (err) {
+      if (!statusEl) return;
+      if (err === 'no-tab' || err === 'inject-failed') statusEl.textContent = t('voice.noTab');
+      else if (err === 'unsupported') statusEl.textContent = t('voice.unsupported');
+      else if (err === 'not-allowed' || err === 'service-not-allowed') statusEl.textContent = t('voice.denied');
+      // Outros erros: continua gravando o fluxo, apenas sem a narração por voz.
+    }
+  );
+}
+
+function stopTeachRecording() {
+  var statusEl = document.getElementById('teach-status');
+  var toggle = document.getElementById('teach-toggle');
+  var label = document.getElementById('teach-toggle-label');
+  var nameEl = document.getElementById('teach-name');
+  _teachRecording = false;
+  if (toggle) toggle.classList.remove('recording');
+  if (label) label.textContent = t('teach.start');
+
+  stopTabSpeech();
+
+  var name = (nameEl && nameEl.value.trim()) || ('fluxo_' + Date.now());
+  chrome.runtime.sendMessage({ type: 'stop_recording' }, function (response) {
+    void chrome.runtime.lastError;
+    var steps = (response && response.workflow) || [];
+    // Persiste o fluxo (passos + narração) em aurex_workflows
+    chrome.storage.local.get(['aurex_workflows'], function (result) {
+      var workflows = (result && result.aurex_workflows) || {};
+      workflows[name] = { steps: steps, narration: _teachTranscript.trim(), createdAt: Date.now() };
+      chrome.storage.local.set({ aurex_workflows: workflows }, function () {
+        if (statusEl) statusEl.textContent = t('teach.saved') + ' (' + steps.length + ' ' + t('teach.steps') + ')';
+      });
+    });
+  });
+}
+
+// ========== RECONHECIMENTO DE VOZ NA ABA ATIVA ==========
+// O webkitSpeechRecognition e bloqueado dentro do side panel (erro
+// "network"/unsupported), mas funciona dentro de uma aba web normal. Por isso,
+// no "Ensinar Aurex" rodamos o reconhecimento DENTRO da aba ativa (onde o
+// usuario demonstra o fluxo) e recebemos a transcricao por mensagens.
+var _tabSpeechActive = false;
+var _tabSpeechOnText = null;
+var _tabSpeechOnError = null;
+
+function speechLangCode() {
+  var l = getAurexLang();
+  return l === 'en' ? 'en-US' : (l === 'es' ? 'es-ES' : 'pt-BR');
+}
+
+function setupTabSpeech() {
+  chrome.runtime.onMessage.addListener(function (request) {
+    if (!_tabSpeechActive) return;
+    if (request && request.type === 'aurex_voice_transcript') {
+      if (_tabSpeechOnText) _tabSpeechOnText(request.final || '', request.interim || '');
+    } else if (request && request.type === 'aurex_voice_error') {
+      if (_tabSpeechOnError) _tabSpeechOnError(request.error);
+    }
+  });
+}
+
+function startTabSpeech(onText, onError) {
+  chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+    var tab = tabs && tabs[0];
+    var bad = !tab || !tab.url || /^(chrome|edge|about|chrome-extension|devtools|view-source):/.test(tab.url);
+    if (bad) { if (onError) onError('no-tab'); return; }
+    _tabSpeechActive = true;
+    _tabSpeechOnText = onText;
+    _tabSpeechOnError = onError;
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: function (lang) {
+        try {
+          var SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+          if (!SR) { chrome.runtime.sendMessage({ type: 'aurex_voice_error', error: 'unsupported' }); return; }
+          if (window.__aurexVoiceRec) { try { window.__aurexVoiceRec.stop(); } catch (e) {} }
+          window.__aurexVoiceActive = true;
+          var rec = new SR();
+          rec.continuous = true;
+          rec.interimResults = true;
+          rec.lang = lang;
+          rec.onresult = function (event) {
+            var finalT = '', interim = '';
+            for (var i = event.resultIndex; i < event.results.length; i++) {
+              var tr = event.results[i][0].transcript;
+              if (event.results[i].isFinal) finalT += tr + ' '; else interim += tr;
+            }
+            chrome.runtime.sendMessage({ type: 'aurex_voice_transcript', final: finalT, interim: interim });
+          };
+          rec.onerror = function (e) { chrome.runtime.sendMessage({ type: 'aurex_voice_error', error: e && e.error }); };
+          rec.onend = function () { if (window.__aurexVoiceActive) { try { rec.start(); } catch (e) {} } };
+          rec.start();
+          window.__aurexVoiceRec = rec;
+        } catch (err) {
+          chrome.runtime.sendMessage({ type: 'aurex_voice_error', error: String(err) });
+        }
+      },
+      args: [speechLangCode()]
+    }, function () {
+      if (chrome.runtime.lastError && onError) onError('inject-failed');
+    });
+  });
+}
+
+function stopTabSpeech() {
+  _tabSpeechActive = false;
+  _tabSpeechOnText = null;
+  _tabSpeechOnError = null;
+  chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+    var tab = tabs && tabs[0];
+    if (!tab || !tab.id) return;
+    chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: function () {
+        window.__aurexVoiceActive = false;
+        if (window.__aurexVoiceRec) { try { window.__aurexVoiceRec.stop(); } catch (e) {} window.__aurexVoiceRec = null; }
+      }
+    }, function () { void chrome.runtime.lastError; });
   });
 }
 
@@ -2068,16 +3945,50 @@ function renderSkillsLists() {
   }
 }
 
-// === LISTENER DE MENSAGENS (PERMISSÕES E WORKFLOW) ===
-chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  if (request.type === "permission_required") {
+// === PERMISSÕES: espera real pela decisão do usuário ===
+//
+// O agente NÃO desiste quando falta permissão. A ferramenta fica pendente
+// (Promise não resolvida) enquanto o widget aguarda o clique, e é re-executada
+// automaticamente assim que o usuário aprova.
+var _permissionWaits = {}; // origin -> { token, resolvers: [] }
+
+function waitForUserPermission(origin, token) {
+  return new Promise(function (resolve) {
+    // Várias ferramentas podem pedir a mesma origem no mesmo turno; todas
+    // aguardam um único widget em vez de empilhar pedidos repetidos na tela.
+    var existing = _permissionWaits[origin];
+    if (existing) {
+      existing.resolvers.push(resolve);
+      return;
+    }
+    _permissionWaits[origin] = { token: token, resolvers: [resolve] };
+    renderPermissionWidget(origin, token);
+  });
+}
+
+function settleUserPermission(origin, granted) {
+  var entry = _permissionWaits[origin];
+  if (!entry) return;
+  delete _permissionWaits[origin];
+  entry.resolvers.forEach(function (resolve) { resolve(granted); });
+}
+
+// Usada ao trocar de conversa: nenhuma espera pode sobreviver ao chat que a
+// originou, senão a execução antiga fica pendurada sem widget na tela.
+function cancelAllPermissionWaits() {
+  Object.keys(_permissionWaits).forEach(function (origin) {
+    settleUserPermission(origin, false);
+  });
+}
+
+function renderPermissionWidget(origin, token) {
     // Extrai o domínio limpo para mostrar ao usuário
-    let displayDomain = request.origin;
-    try { displayDomain = new URL(request.origin).hostname; } catch(e) {}
+    let displayDomain = origin;
+    try { displayDomain = new URL(origin).hostname; } catch(e) {}
     const safeDisplayDomain = escapeHtml(displayDomain);
-    const safeOrigin = escapeHtml(request.origin);
-    const safeToken = escapeHtml(request.token);
-    
+    const safeOrigin = escapeHtml(origin);
+    const safeToken = escapeHtml(token);
+
     // Widget de permissão no mesmo estilo visual do Plano do Aurex
     const htmlContent = `
       <widget>
@@ -2103,11 +4014,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     
     // NÃO adicionamos ao chatHistory para não quebrar a sequência tool_calls -> tool
     appendMessageToUI("assistant", htmlContent);
-  }
-});
+}
 
 // Event delegation para botões injetados no chat (permissão e bloqueio)
-document.getElementById('messages-container').addEventListener('click', (e) => {
+var _messagesContainerEl = document.getElementById('messages-container');
+if (_messagesContainerEl) _messagesContainerEl.addEventListener('click', (e) => {
   // Botão de APROVAR
   if (e.target && e.target.classList.contains('btn-approve-origin')) {
     const origin = e.target.getAttribute('data-origin');
@@ -2115,7 +4026,13 @@ document.getElementById('messages-container').addEventListener('click', (e) => {
     const widgetContainer = e.target.closest('.aurex-widget') || e.target.closest('.message');
     
     chrome.runtime.sendMessage({ type: "grant_permission", origin: origin, token: token }, (response) => {
-      if (!response || !response.success) return;
+      if (!response || !response.success) {
+        // Não deixa a tarefa pendurada: informa o motivo e libera o agente.
+        var reason = (response && response.error) ? response.error : 'Falha ao registrar a permissão.';
+        appendMessageToUI('assistant', '⚠️ Não consegui registrar a permissão para ' + escapeHtml(origin) + ': ' + escapeHtml(reason) + ' Peça a ação novamente.');
+        settleUserPermission(origin, false);
+        return;
+      }
 
       // Animação de saída suave (igual ao plano aprovado)
       if (widgetContainer) {
@@ -2124,6 +4041,9 @@ document.getElementById('messages-container').addEventListener('click', (e) => {
         widgetContainer.style.transform = 'translateY(-10px) scale(0.98)';
         setTimeout(function() { widgetContainer.style.display = 'none'; }, 400);
       }
+
+      // Destrava a ferramenta que estava esperando -> ela é re-executada sozinha
+      settleUserPermission(origin, true);
     });
   }
   
@@ -2134,12 +4054,16 @@ document.getElementById('messages-container').addEventListener('click', (e) => {
     const widgetContainer = e.target.closest('.aurex-widget') || e.target.closest('.message');
 
     chrome.runtime.sendMessage({ type: "deny_permission", origin: origin, token: token }, (response) => {
-      if (!response || !response.success || !widgetContainer) return;
+      if (widgetContainer) {
+        widgetContainer.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
+        widgetContainer.style.opacity = '0';
+        widgetContainer.style.transform = 'translateY(-10px) scale(0.98)';
+        setTimeout(function() { widgetContainer.style.display = 'none'; }, 400);
+      }
 
-      widgetContainer.style.transition = 'all 0.4s cubic-bezier(0.4, 0, 0.2, 1)';
-      widgetContainer.style.opacity = '0';
-      widgetContainer.style.transform = 'translateY(-10px) scale(0.98)';
-      setTimeout(function() { widgetContainer.style.display = 'none'; }, 400);
+      // Mesmo se o registro falhar, a decisão do usuário foi "não":
+      // liberamos o agente com negativa em vez de deixá-lo travado.
+      settleUserPermission(origin, false);
     });
   }
 });

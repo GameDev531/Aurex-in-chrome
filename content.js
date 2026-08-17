@@ -25,6 +25,105 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           sendResponse({ success: false, error: "Element not found" });
         }
       }
+      else if (command === "get_page_source") {
+        // Código-fonte real da página (para clonar/estudar um site).
+        // Limite generoso, mas sempre com marcação explícita de corte para o
+        // modelo saber que o conteúdo veio incompleto.
+        const MAX_CHARS = 180000;
+        const part = (value || "html").toLowerCase();
+
+        const truncate = (text) => {
+          const str = String(text == null ? "" : text);
+          if (str.length <= MAX_CHARS) return { text: str, truncated: false, totalChars: str.length };
+          return {
+            text: str.slice(0, MAX_CHARS) + "\n\n<!-- [AUREX] TRUNCADO: " + (str.length - MAX_CHARS) + " caracteres restantes -->",
+            truncated: true,
+            totalChars: str.length
+          };
+        };
+
+        if (part === "css") {
+          const inline = [];
+          const external = [];
+          const blocked = [];
+
+          Array.from(document.querySelectorAll('style')).forEach((styleEl) => {
+            if (styleEl.textContent && styleEl.textContent.trim()) inline.push(styleEl.textContent);
+          });
+
+          Array.from(document.styleSheets).forEach((sheet) => {
+            const href = sheet.href || null;
+            try {
+              // Folhas de outra origem lançam SecurityError ao ler cssRules.
+              const rules = sheet.cssRules;
+              if (!rules) return;
+              const text = Array.from(rules).map((r) => r.cssText).join("\n");
+              if (href) external.push({ href, css: text });
+              else if (text.trim() && !inline.length) inline.push(text);
+            } catch (cssErr) {
+              if (href) blocked.push(href);
+            }
+          });
+
+          const combined = inline.join("\n\n") +
+            (external.length ? "\n\n" + external.map((e) => "/* " + e.href + " */\n" + e.css).join("\n\n") : "");
+          const out = truncate(combined);
+
+          sendResponse({
+            success: true,
+            url: window.location.href,
+            part: "css",
+            css: out.text,
+            truncated: out.truncated,
+            totalChars: out.totalChars,
+            blockedStylesheets: blocked,
+            note: blocked.length
+              ? "Estas folhas de estilo sao de outra origem e o navegador bloqueia a leitura direta. Use a ferramenta http_request nessas URLs para baixar o CSS."
+              : undefined
+          });
+        }
+        else if (part === "scripts" || part === "js") {
+          const inlineScripts = [];
+          const externalScripts = [];
+
+          Array.from(document.querySelectorAll('script')).forEach((scriptEl) => {
+            if (scriptEl.src) externalScripts.push(scriptEl.src);
+            else if (scriptEl.textContent && scriptEl.textContent.trim()) inlineScripts.push(scriptEl.textContent);
+          });
+
+          const out = truncate(inlineScripts.join("\n\n/* --- proximo script inline --- */\n\n"));
+          sendResponse({
+            success: true,
+            url: window.location.href,
+            part: "scripts",
+            inlineScripts: out.text,
+            truncated: out.truncated,
+            totalChars: out.totalChars,
+            externalScripts: externalScripts,
+            note: externalScripts.length
+              ? "Scripts externos nao sao lidos aqui. Use a ferramenta http_request nessas URLs para baixar o codigo."
+              : undefined
+          });
+        }
+        else {
+          const out = truncate(document.documentElement.outerHTML);
+          const assets = {
+            stylesheets: Array.from(document.querySelectorAll('link[rel~="stylesheet"][href]')).map((l) => l.href),
+            scripts: Array.from(document.querySelectorAll('script[src]')).map((s) => s.src),
+            images: Array.from(document.querySelectorAll('img[src]')).slice(0, 60).map((i) => i.src)
+          };
+          sendResponse({
+            success: true,
+            url: window.location.href,
+            title: document.title,
+            part: "html",
+            html: out.text,
+            truncated: out.truncated,
+            totalChars: out.totalChars,
+            assets: assets
+          });
+        }
+      }
       else if (command === "read_dom") {
         // Captura abrangente do conteúdo da página
         const pageInfo = {
